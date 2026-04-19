@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>알까기 퍼즐 게임</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -11,8 +11,11 @@
         <style>
           body {
             margin: 0;
-            overflow: hidden;
-            background-color: #1a202c; /* Tailwind's gray-900 */
+            overflow-x: hidden;
+            overflow-y: auto;
+            background-color: #1a202c;
+            /* 모바일 Safe Area (노치/홈바) 대응 */
+            padding-bottom: env(safe-area-inset-bottom);
           }
           @keyframes pop-in {
             0% { transform: scale(0.8); opacity: 0; }
@@ -312,6 +315,25 @@
             };
         };
 
+        // 씽크홀 전용 낙하 오브젝트 생성 — 구멍 중심으로 빨려들어가는 방향
+        const createSinkholeFallingMarble = (marble, isRed, sinkhole, puckRadius = 15) => {
+            const dx = sinkhole.x - marble.x;
+            const dy = sinkhole.y - marble.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            return {
+                ...marble,
+                startX: marble.x,
+                startY: marble.y,
+                pushDirectionX: dx / dist,   // 구멍 중심 방향
+                pushDirectionY: dy / dist,
+                fallProgress: 0,
+                startSize: puckRadius,
+                isRed: isRed,
+                fallType: 'sinkhole',        // 렌더러 분기용 플래그
+                pullDistance: dist + 4,      // 중심까지 이동 거리
+            };
+        };
+
         const MarblePuzzleGame = () => {
           const lastCollisionSoundTime = useRef(0);
 
@@ -369,6 +391,7 @@
           const [score, setScore] = useState(0); // New state for current score
           const [highScore, setHighScore] = useState(0); // New state for high score
           const collisionPopRef = useRef({}); // New ref to track marble collision for pop animation
+          const springCooldownRef = useRef({}); // 스프링 재진입 방지 쿨다운 {marbleId: timestamp}
           const [particles, setParticles] = useState([]); // New state for particles
           const [aimEnd, setAimEnd] = useState(null);
           const [isPaused, setIsPaused] = useState(false); // New state for pause functionality
@@ -391,26 +414,32 @@
 
           // 반응형 스케일 계산
           const [scale, setScale] = useState(1);
+          const [isMobile, setIsMobile] = useState(false);
 
           useEffect(() => {
             const calculateScale = () => {
-              const viewportHeight = window.innerHeight;
-              const viewportWidth = window.innerWidth;
-              const contentHeight = 1100; // 예상 콘텐츠 높이
-              const contentWidth = 724; // 콘텐츠 너비
-              const padding = 40;
+              const vw = window.innerWidth;
+              const vh = window.innerHeight;
+              const mobile = vw < 768;
+              setIsMobile(mobile);
 
               if (isDevMode) {
                 // 개발자 모드: 좌우 패널 공간(약 400px) 고려
-                const availableWidth = viewportWidth - 400;
-                const scaleX = Math.min(1, (availableWidth - padding) / contentWidth);
-                const scaleY = Math.min(1, (viewportHeight - padding) / contentHeight);
-                const calculatedScale = Math.min(scaleX, scaleY);
-                setScale(calculatedScale);
+                const availableWidth = vw - 400;
+                const scaleX = Math.min(1, (availableWidth - 20) / 724);
+                const scaleY = Math.min(1, (vh - 20) / 1100);
+                setScale(Math.min(scaleX, scaleY));
+              } else if (mobile) {
+                // 모바일: transform scale을 사용하지 않음
+                // canvas CSS(width:100%)가 자연스럽게 크기를 맞춤
+                // transform scale은 getBoundingClientRect()를 왜곡시켜 터치 좌표를 망가뜨림
+                setScale(1);
               } else {
-                // 일반 모드: 높이 기준으로만 스케일 조정
-                const calculatedScale = Math.min(1, (viewportHeight - padding) / contentHeight);
-                setScale(calculatedScale);
+                // 데스크탑: 높이·너비 모두 고려
+                const headerH = 140; // 헤더 예상 높이
+                const scaleByH = Math.min(1, (vh - headerH - 20) / (CANVAS_SIZE + 10));
+                const scaleByW = Math.min(1, (vw - 20) / 724);
+                setScale(Math.min(scaleByH, scaleByW));
               }
             };
 
@@ -627,16 +656,16 @@
               obstacles: []
             },
             // Stages 10-19
-            { id: 10, name: "Stage 10", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 400, y: 400, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
-            { id: 11, name: "Stage 11", marbles: [{ x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
-            { id: 12, name: "Stage 12", marbles: [{ x: 100, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 150, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
-            { id: 13, name: "Stage 13", marbles: [{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 280, vx: 0, vy: 0, mass: 1 }], shooter: { x: 100, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
-            { id: 14, name: "Stage 14", marbles: [{ x: 150, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 300, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 300, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
+            { id: 10, name: "스테이지 10: 벽 넘기", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 100, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'wall', x: 200, y: 160, width: 100, height: 16 }] },
+            { id: 11, name: "스테이지 11: 좁은 통로", marbles: [{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'wall', x: 40, y: 300, width: 170, height: 14 }, { type: 'wall', x: 290, y: 300, width: 170, height: 14 }] },
+            { id: 12, name: "스테이지 12: 미로 입구", marbles: [{ x: 100, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 120, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'wall', x: 40, y: 240, width: 140, height: 14 }, { type: 'wall', x: 320, y: 240, width: 140, height: 14 }, { type: 'wall', x: 180, y: 320, width: 140, height: 14 }] },
+            { id: 13, name: "스테이지 13: 조심조심", marbles: [{ x: 150, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 230, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'sinkhole', x: 250, y: 330, radius: 28 }] },
+            { id: 14, name: "스테이지 14: 구멍 피하기", marbles: [{ x: 150, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 260, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'sinkhole', x: 250, y: 180, radius: 32 }, { type: 'wall', x: 180, y: 340, width: 140, height: 14 }] },
             { id: 15, name: "Stage 15", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 100, y: 300, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 300, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
             { id: 16, name: "Stage 16", marbles: [{ x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 300, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
-            { id: 17, name: "Stage 17", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 300, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
-            { id: 18, name: "Stage 18", marbles: [{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 220, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
-            { id: 19, name: "Stage 19", marbles: [{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 280, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [] },
+            { id: 17, name: "스테이지 17: 자석 Lv.1", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 220, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'magnet', x: 250, y: 340, level: 1 }] },
+            { id: 18, name: "스테이지 18: 자석 Lv.2+벽", marbles: [{ x: 120, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 160, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [{ type: 'magnet', x: 250, y: 320, level: 2 }, { type: 'wall', x: 160, y: 295, width: 80, height: 14 }, { type: 'wall', x: 310, y: 295, width: 80, height: 14 }] },
+            { id: 19, name: "스테이지 19: 강력 자석 Lv.3", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'magnet', x: 250, y: 340, level: 3 }] },
 
             // 스테이지 20-29: 중급 난이도
             { id: 20, name: "Stage 20", marbles: [{ x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 280, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 280, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 180, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
@@ -658,21 +687,21 @@
             { id: 34, name: "Stage 34", marbles: [{ x: 180, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 320, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 2, 2: 3, 1: 5 }, obstacles: [] },
             { id: 35, name: "Stage 35", marbles: [{ x: 120, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 220, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 380, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 320, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 320, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 320, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 3, 2: 4, 1: 5 }, obstacles: [] },
             { id: 36, name: "Stage 36", marbles: [{ x: 80, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 160, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 230, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 280, vx: 0, vy: 0, mass: 1 }], shooter: { x: 80, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
-            { id: 37, name: "Stage 37", marbles: [{ x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
+            { id: 37, name: "스테이지 37: 아치형", marbles: [{ x: 80, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 145, y: 110, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 355, y: 110, vx: 0, vy: 0, mass: 1 }, { x: 420, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 38, name: "Stage 38", marbles: [{ x: 200, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 230, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 230, vx: 0, vy: 0, mass: 1 }], shooter: { x: 100, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 39, name: "Stage 39", marbles: [{ x: 150, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 300, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 300, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
-            { id: 40, name: "Stage 40", marbles: [{ x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
+            { id: 40, name: "스테이지 40: W형 배열", marbles: [{ x: 80, y: 110, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 130, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 330, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 420, y: 110, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 290, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 41, name: "Stage 41", marbles: [{ x: 200, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 240, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 240, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 3, 2: 4, 1: 5 }, obstacles: [] },
             { id: 42, name: "Stage 42", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 280, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 43, name: "Stage 43", marbles: [{ x: 150, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 180, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 300, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 240, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 240, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 3, 2: 4, 1: 5 }, obstacles: [] },
-            { id: 44, name: "Stage 44", marbles: [{ x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
+            { id: 44, name: "스테이지 44: 주사위 다섯", marbles: [{ x: 140, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 210, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 140, y: 290, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 290, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 45, name: "Stage 45", marbles: [{ x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 300, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 3, 2: 4, 1: 5 }, obstacles: [] },
             { id: 46, name: "Stage 46", marbles: [{ x: 150, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 160, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 230, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 160, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 230, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 47, name: "Stage 47", marbles: [{ x: 100, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 50, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 3, 2: 4, 1: 5 }, obstacles: [] },
             { id: 48, name: "Stage 48", marbles: [{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 250, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 190, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 310, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 100, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
-            { id: 49, name: "Stage 49", marbles: [{ x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
+            { id: 49, name: "스테이지 49: 역삼각형", marbles: [{ x: 130, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 190, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 310, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 290, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 50, name: "Stage 50", marbles: [{ x: 120, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 250, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
-            { id: 51, name: "Stage 51", marbles: [{ x: 250, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
+            { id: 51, name: "스테이지 51: 모래시계", marbles: [{ x: 140, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 190, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 310, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 260, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 52, name: "Stage 52", marbles: [{ x: 100, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 220, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 53, name: "Stage 53", marbles: [{ x: 150, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 280, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
             { id: 54, name: "Stage 54", marbles: [{ x: 100, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 260, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 340, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 420, y: 150, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
@@ -699,7 +728,7 @@
             { id: 73, name: "Stage 73", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 120, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 220, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 350, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 4, starCriteria: { 3: 3, 2: 4, 1: 5 }, obstacles: [] },
             { id: 74, name: "Stage 74", marbles: [{ x: 150, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 100, y: 160, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 160, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 160, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 160, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 240, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 240, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
             { id: 75, name: "Stage 75", marbles: [{ x: 250, y: 80, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 150, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 100, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 220, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
-            { id: 76, name: "Stage 76", marbles: [{ x: 130, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 210, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 290, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 330, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 330, y: 260, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
+            { id: 76, name: "Stage 76", marbles: [{ x: 130, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 210, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 290, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 330, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 210, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 290, y: 260, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
             { id: 77, name: "Stage 77", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 260, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 340, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 420, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 140, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 200, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
             { id: 78, name: "Stage 78", marbles: [{ x: 150, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 100, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 350, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 100, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 260, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
             { id: 79, name: "Stage 79", marbles: [{ x: 200, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 300, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 230, vx: 0, vy: 0, mass: 1 }, { x: 330, y: 230, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 300, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 5, starCriteria: { 3: 4, 2: 5, 1: 6 }, obstacles: [] },
@@ -718,7 +747,7 @@
             // 스테이지 91-99: 최종 보스
             { id: 91, name: "Stage 91", marbles: [{ x: 120, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 90, vx: 0, vy: 0, mass: 1 }, { x: 160, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 150, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 320, y: 150, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 200, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 160, y: 270, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 270, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 270, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 6, starCriteria: { 3: 5, 2: 6, 1: 7 }, obstacles: [] },
             { id: 92, name: "Stage 92", marbles: [{ x: 100, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 310, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 135, y: 145, vx: 0, vy: 0, mass: 1 }, { x: 205, y: 145, vx: 0, vy: 0, mass: 1 }, { x: 275, y: 145, vx: 0, vy: 0, mass: 1 }, { x: 345, y: 145, vx: 0, vy: 0, mass: 1 }, { x: 100, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 170, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 210, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 310, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 210, vx: 0, vy: 0, mass: 1 }, { x: 135, y: 275, vx: 0, vy: 0, mass: 1 }, { x: 345, y: 275, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 7, starCriteria: { 3: 6, 2: 7, 1: 8 }, obstacles: [] },
-            { id: 93, name: "Stage 93", marbles: [{ x: 110, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 180, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 320, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 390, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 145, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 215, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 285, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 355, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 110, y: 200, vx: 0, vy: 0, mass: 1 },{ x: 180, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true },{ x: 250, y: 200, vx: 0, vy: 0, mass: 1 },{ x: 320, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true },{ x: 390, y: 200, vx: 0, vy: 0, mass: 1 },{ x: 180, y: 260, vx: 0, vy: 0, mass: 1 },{ x: 320, y: 260, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 7, starCriteria: { 3: 6, 2: 7, 1: 8 }, obstacles: [] },
+            { id: 93, name: "Stage 93", marbles: [{ x: 110, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 180, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 250, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 320, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 390, y: 80, vx: 0, vy: 0, mass: 1 },{ x: 145, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 215, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 285, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 355, y: 140, vx: 0, vy: 0, mass: 1 },{ x: 180, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true },{ x: 250, y: 200, vx: 0, vy: 0, mass: 1 },{ x: 320, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true },{ x: 215, y: 270, vx: 0, vy: 0, mass: 1 },{ x: 285, y: 270, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 7, starCriteria: { 3: 6, 2: 7, 1: 8 }, obstacles: [] },
             { id: 94, name: "Stage 94", marbles: [{ x: 100, y: 75, vx: 0, vy: 0, mass: 1 }, { x: 165, y: 75, vx: 0, vy: 0, mass: 1 }, { x: 230, y: 75, vx: 0, vy: 0, mass: 1 }, { x: 295, y: 75, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 75, vx: 0, vy: 0, mass: 1 }, { x: 425, y: 75, vx: 0, vy: 0, mass: 1 }, { x: 132, y: 135, vx: 0, vy: 0, mass: 1 }, { x: 197, y: 135, vx: 0, vy: 0, mass: 1 }, { x: 262, y: 135, vx: 0, vy: 0, mass: 1 }, { x: 327, y: 135, vx: 0, vy: 0, mass: 1 }, { x: 392, y: 135, vx: 0, vy: 0, mass: 1 }, { x: 100, y: 195, vx: 0, vy: 0, mass: 1 }, { x: 165, y: 195, vx: 0, vy: 0, mass: 1 }, { x: 230, y: 195, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 295, y: 195, vx: 0, vy: 0, mass: 1 }, { x: 360, y: 195, vx: 0, vy: 0, mass: 1 }, { x: 425, y: 195, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 7, starCriteria: { 3: 6, 2: 7, 1: 8 }, obstacles: [] },
             { id: 95, name: "Stage 95", marbles: [{ x: 110, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 175, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 80, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 305, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 142, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 207, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 272, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 337, y: 140, vx: 0, vy: 0, mass: 1 }, { x: 110, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 175, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 240, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 305, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 200, vx: 0, vy: 0, mass: 1 }, { x: 142, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 207, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 272, y: 260, vx: 0, vy: 0, mass: 1 }, { x: 337, y: 260, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 7, starCriteria: { 3: 6, 2: 7, 1: 8 }, obstacles: [] },
             { id: 96, name: "Stage 96", marbles: [{ x: 100, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 160, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 340, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 70, vx: 0, vy: 0, mass: 1 }, { x: 130, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 190, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 130, vx: 0, vy: 0, mass: 1, isHeavy: true }, { x: 310, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 130, vx: 0, vy: 0, mass: 1 }, { x: 100, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 160, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 220, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 280, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 340, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 190, vx: 0, vy: 0, mass: 1 }, { x: 130, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 250, vx: 0, vy: 0, mass: 1 }, { x: 370, y: 250, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 8, starCriteria: { 3: 7, 2: 8, 1: 9 }, obstacles: [] },
@@ -1080,16 +1109,13 @@
                 // 스프링 충돌 체크 (개발자 모드)
                 if (isDevMode && devStage.springs) {
                   devStage.springs.forEach(spring => {
-                    const springPower = spring.power || 20; // 기본 파워 20
-                    const springSize = spring.size || 40;
+                    const springPower = spring.power || 20;
+                    const springSize  = spring.size  || 40;
                     const springAngle = spring.angle || 0;
 
-                    // 파란 구슬과 스프링 충돌
                     const checkSpringCollision = (marble) => {
-                      // 구슬 중심이 스프링 영역 안에 있는지 확인
                       if (marble.x >= spring.x && marble.x <= spring.x + springSize &&
                           marble.y >= spring.y && marble.y <= spring.y + springSize) {
-                        // 스프링 방향으로 속도 적용
                         marble.vx = Math.cos(springAngle) * springPower;
                         marble.vy = Math.sin(springAngle) * springPower;
                         playSound('collision');
@@ -1199,39 +1225,85 @@
 
                 // 판 경계에서 떨어지는 로직에서 처리 (충돌과 다름)
 
-                // 장애물 충돌 (현재는 사각형만)
+                // ── 장애물 충돌 (type 별 처리) ──────────────────────────
                 const allMarbles = [newShooter, ...newMarbles];
-                allMarbles.forEach(marble => {
-                    const currentStageData = stages.find(s => s.id === currentStage);
-                    if (currentStageData && currentStageData.obstacles && currentStageData.obstacles.length > 0) {
-                        currentStageData.obstacles.forEach(obstacle => {
-                            const closestX = Math.max(obstacle.x, Math.min(marble.x, obstacle.x + obstacle.width));
-                            const closestY = Math.max(obstacle.y, Math.min(newY, obstacle.y + obstacle.height));
-                            const dx = marble.x - closestX;
-                            const dy = marble.y - closestY;
-                            const distance = Math.sqrt(dx * dx + dy * dy);
+                const currentStageDataForObs = isDevMode ? devStage : stages.find(s => s.id === currentStage);
 
-                            if (distance < physicsConfig.puckRadius && distance > 0.01) {
-                                playSound('collision');
-                                const overlap = physicsConfig.puckRadius - distance;
-                                const normalX = dx / distance;
-                                const normalY = dy / distance;
-                                marble.x += normalX * overlap * 1.05;
-                                marble.y += normalY * overlap * 1.05;
-                                const dotProduct = marble.vx * normalX + marble.vy * normalY;
-                                marble.vx -= 2 * dotProduct * normalX;
-                                marble.vy -= 2 * dotProduct * normalY;
-                                marble.vx *= physicsConfig.bounceDamping;
-                                marble.vy *= physicsConfig.bounceDamping;
-                            }
-                        });
-                    }
-                });
+                if (currentStageDataForObs && currentStageDataForObs.obstacles && currentStageDataForObs.obstacles.length > 0) {
+                  allMarbles.forEach(marble => {
+                    currentStageDataForObs.obstacles.forEach(obstacle => {
+                      const r = physicsConfig.puckRadius;
+
+                      // ── type: 'wall' (막힌 벽) ──────────────────────
+                      if (!obstacle.type || obstacle.type === 'wall') {
+                        // 원과 AABB 최근접점 계산 (버그 수정: marble.y 사용)
+                        const closestX = Math.max(obstacle.x, Math.min(marble.x, obstacle.x + obstacle.width));
+                        const closestY = Math.max(obstacle.y, Math.min(marble.y, obstacle.y + obstacle.height));
+                        const dx = marble.x - closestX;
+                        const dy = marble.y - closestY;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+
+                        if (dist < r && dist > 0.001) {
+                          playSound('collision');
+                          const overlap = r - dist;
+                          const nx = dx / dist;
+                          const ny = dy / dist;
+                          // 겹침 해소 (1.02: 미세 여유)
+                          marble.x += nx * overlap * 1.02;
+                          marble.y += ny * overlap * 1.02;
+                          // 반사 (restitution 속성 지원, 기본 bounceDamping)
+                          const restitution = obstacle.restitution !== undefined ? obstacle.restitution : physicsConfig.bounceDamping;
+                          const dot = marble.vx * nx + marble.vy * ny;
+                          marble.vx -= (1 + restitution) * dot * nx;
+                          marble.vy -= (1 + restitution) * dot * ny;
+                          marble.vx *= restitution;
+                          marble.vy *= restitution;
+                        }
+                      }
+
+                      // ── type: 'magnet' (자기장 인력 — 3단계 레벨) ────────
+                      else if (obstacle.type === 'magnet') {
+                        // level 1 (중형): 반경 85  | level 2 (대형): 반경 125 | level 3 (초강력): 반경 170
+                        const MAGNET_LEVELS = {
+                          1: { radius: 85,  strength: 0.48 },
+                          2: { radius: 125, strength: 0.72 },
+                          3: { radius: 170, strength: 0.95 },
+                        };
+                        const lv   = MAGNET_LEVELS[obstacle.level || 1];
+                        const range    = lv.radius;
+                        const strength = lv.strength;
+
+                        const dx = obstacle.x - marble.x;
+                        const dy = obstacle.y - marble.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < range && dist > 5) {
+                          const falloff = 1 - (dist / range);
+                          const force   = strength * falloff;
+                          marble.vx += (dx / dist) * force;
+                          marble.vy += (dy / dist) * force;
+                        }
+                      }
+                    });
+                  });
+                }
 
                 const marblesOnBoard = [];
                 const marblesFalling = [];
+
+                // 씽크홀 목록 미리 추출
+                const sinkholes = (currentStageDataForObs?.obstacles || []).filter(o => o.type === 'sinkhole');
+
                 newMarbles.forEach(m => {
-                    if (shouldFall(m, puckRadius)) {
+                    // 씽크홀 진입 판정 우선 (경계 낙하보다 먼저)
+                    const suckedBy = sinkholes.find(sh => {
+                        const dx = m.x - sh.x;
+                        const dy = m.y - sh.y;
+                        return Math.sqrt(dx * dx + dy * dy) < sh.radius * 0.85; // 반경 85%부터 흡입
+                    });
+                    if (suckedBy) {
+                        if (!fallSoundPlayedThisFrame) { playSound('fall'); fallSoundPlayedThisFrame = true; }
+                        marblesFalling.push(createSinkholeFallingMarble(m, true, suckedBy, puckRadius));
+                    } else if (shouldFall(m, puckRadius)) {
                         if (!fallSoundPlayedThisFrame) { playSound('fall'); fallSoundPlayedThisFrame = true; }
                         marblesFalling.push(createFallingMarble(m, true, puckRadius));
                     } else {
@@ -1248,8 +1320,17 @@
                 if (shooterFallingRef.current || hasFallenRef.current) {
                     // 떨어지는 중이거나 이미 떨어진 경우 아무것도 하지 않음
                 } else {
-                    // 파란 구슬 낙하 판정
-                    if (shouldFall(newShooter, puckRadius)) {
+                    // 파란 구슬 씽크홀/낙하 판정
+                    const shooterSuckedBy = sinkholes.find(sh => {
+                        const dx = newShooter.x - sh.x;
+                        const dy = newShooter.y - sh.y;
+                        return Math.sqrt(dx * dx + dy * dy) < sh.radius * 0.85;
+                    });
+                    if (shooterSuckedBy) {
+                        if (!fallSoundPlayedThisFrame) playSound('fall');
+                        setShooterFalling(createSinkholeFallingMarble(newShooter, false, shooterSuckedBy, puckRadius));
+                        hasFallenRef.current = true;
+                    } else if (shouldFall(newShooter, puckRadius)) {
                         if (!fallSoundPlayedThisFrame) {
                             playSound('fall');
                         }
@@ -1334,15 +1415,200 @@
                 ctx.drawImage(woodTextureRef.current, BOARD_OFFSET, BOARD_OFFSET);
               }
 
-              // 장애물 렌더링
-              const currentStageData = stages.find(s => s.id === currentStage);
-              if (currentStageData && currentStageData.obstacles) {
-                currentStageData.obstacles.forEach(obstacle => {
-                  ctx.fillStyle = '#4a2c1a';
-                  ctx.strokeStyle = '#2a1c0a';
-                  ctx.lineWidth = 2;
-                  ctx.fillRect(obstacle.x + BOARD_OFFSET, obstacle.y + BOARD_OFFSET, obstacle.width, obstacle.height);
-                  ctx.strokeRect(obstacle.x + BOARD_OFFSET, obstacle.y + BOARD_OFFSET, obstacle.width, obstacle.height);
+              // ── 장애물 렌더링 (type 별) ──────────────────────────────
+              const renderStageData = isDevMode ? devStage : stages.find(s => s.id === currentStage);
+              if (renderStageData && renderStageData.obstacles) {
+                renderStageData.obstacles.forEach(obstacle => {
+                  const ox = obstacle.x + BOARD_OFFSET;
+                  const oy = obstacle.y + BOARD_OFFSET;
+                  const ow = obstacle.width;
+                  const oh = obstacle.height;
+
+                  if (!obstacle.type || obstacle.type === 'wall') {
+                    // ── 막힌 벽: 브릭 패턴 ─────────────────────────
+                    ctx.save();
+                    // 벽 본체
+                    ctx.fillStyle = '#5c3a1e';
+                    ctx.strokeStyle = '#3a2210';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.roundRect ? ctx.roundRect(ox, oy, ow, oh, 3) : ctx.rect(ox, oy, ow, oh);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // 브릭 줄무늬 (가로 분할선)
+                    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+                    ctx.lineWidth = 1;
+                    const brickH = Math.max(8, oh / Math.max(1, Math.round(oh / 12)));
+                    for (let by = oy + brickH; by < oy + oh - 2; by += brickH) {
+                      ctx.beginPath(); ctx.moveTo(ox + 2, by); ctx.lineTo(ox + ow - 2, by); ctx.stroke();
+                    }
+                    // 세로 분할선 (홀짝 행 엇갈림)
+                    const brickW = Math.max(16, ow / Math.max(1, Math.round(ow / 18)));
+                    let row = 0;
+                    for (let by = oy; by < oy + oh; by += brickH, row++) {
+                      const offset = (row % 2 === 0) ? 0 : brickW / 2;
+                      for (let bx = ox + offset + brickW; bx < ox + ow - 2; bx += brickW) {
+                        const lineY1 = Math.max(oy + 1, by);
+                        const lineY2 = Math.min(oy + oh - 1, by + brickH);
+                        ctx.beginPath(); ctx.moveTo(bx, lineY1); ctx.lineTo(bx, lineY2); ctx.stroke();
+                      }
+                    }
+                    // 하이라이트 (위쪽 밝은 선)
+                    ctx.strokeStyle = 'rgba(255,200,150,0.18)';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(ox + 3, oy + 1); ctx.lineTo(ox + ow - 3, oy + 1); ctx.stroke();
+                    ctx.restore();
+                  }
+
+                  else if (obstacle.type === 'sinkhole') {
+                    // ── 씽크홀: 어두운 원형 구멍 ────────────────────
+                    const cx = ox; // ox = obstacle.x + BOARD_OFFSET (여기선 ox=center x)
+                    const cy = oy;
+                    const r  = obstacle.radius;
+                    // 씽크홀은 x,y가 중심 좌표
+                    const scx = obstacle.x + BOARD_OFFSET;
+                    const scy = obstacle.y + BOARD_OFFSET;
+
+                    ctx.save();
+
+                    // 바깥 경고 링 (위험 표시)
+                    ctx.strokeStyle = 'rgba(180,30,30,0.45)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.arc(scx, scy, r + 4, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // 구멍 본체 (가장 어두운 원)
+                    ctx.fillStyle = '#0a0305';
+                    ctx.beginPath();
+                    ctx.arc(scx, scy, r, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // 깊이감 동심원 3개
+                    const rings = [
+                      { ratio: 0.72, color: 'rgba(80,10,20,0.7)',  lw: 1.5 },
+                      { ratio: 0.48, color: 'rgba(120,20,30,0.55)', lw: 1.2 },
+                      { ratio: 0.24, color: 'rgba(160,30,40,0.4)',  lw: 1.0 },
+                    ];
+                    rings.forEach(({ ratio, color, lw }) => {
+                      ctx.strokeStyle = color;
+                      ctx.lineWidth = lw;
+                      ctx.beginPath();
+                      ctx.arc(scx, scy, r * ratio, 0, Math.PI * 2);
+                      ctx.stroke();
+                    });
+
+                    // 느리게 회전하는 나선 (Date.now 기반 — 렌더 루프마다 호출되므로 자연스럽게 회전)
+                    const t = Date.now() * 0.0006;
+                    for (let i = 0; i < 3; i++) {
+                      const angle = t + (i * Math.PI * 2 / 3);
+                      const x1 = scx + Math.cos(angle) * r * 0.15;
+                      const y1 = scy + Math.sin(angle) * r * 0.15;
+                      const x2 = scx + Math.cos(angle + 0.6) * r * 0.55;
+                      const y2 = scy + Math.sin(angle + 0.6) * r * 0.55;
+                      ctx.strokeStyle = 'rgba(200,60,60,0.3)';
+                      ctx.lineWidth = 1;
+                      ctx.beginPath();
+                      ctx.moveTo(x1, y1);
+                      ctx.lineTo(x2, y2);
+                      ctx.stroke();
+                    }
+
+                    // 외곽 테두리
+                    ctx.strokeStyle = '#4a1018';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(scx, scy, r, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    ctx.restore();
+                  }
+
+                  else if (obstacle.type === 'magnet') {
+                    // ── 마그네틱 3단계: Lv1=중형 Lv2=대형 Lv3=초강력 ─────
+                    const MAGNET_VIS = {
+                      1: { radius: 85,  bodyR: 18, rings: 2,
+                           fill: '#1e3a8a', stroke: '#3b82f6', dotColor: '96,165,250', dotCount: 6 },
+                      2: { radius: 125, bodyR: 24, rings: 3,
+                           fill: '#1e1b4b', stroke: '#818cf8', dotColor: '165,180,252', dotCount: 8 },
+                      3: { radius: 170, bodyR: 30, rings: 4,
+                           fill: '#0c0a1a', stroke: '#c4b5fd', dotColor: '196,181,253', dotCount: 12 },
+                    };
+                    const lv  = obstacle.level || 1;
+                    const vis = MAGNET_VIS[lv];
+                    const mcx = obstacle.x + BOARD_OFFSET;
+                    const mcy = obstacle.y + BOARD_OFFSET;
+
+                    ctx.save();
+
+                    // 동심원 링 (레벨 수만큼)
+                    const ringRatios = [0.95, 0.70, 0.46, 0.25];
+                    const ringAlphas = [0.12, 0.22, 0.34, 0.48];
+                    for (let ri = 0; ri < vis.rings; ri++) {
+                      ctx.strokeStyle = `rgba(${vis.dotColor},${ringAlphas[ri]})`;
+                      ctx.lineWidth = ri === vis.rings - 1 ? 1.5 : 1;
+                      ctx.setLineDash(ri === 0 ? [4, 7] : [5, 8]);
+                      ctx.beginPath();
+                      ctx.arc(mcx, mcy, vis.radius * ringRatios[ri], 0, Math.PI * 2);
+                      ctx.stroke();
+                    }
+                    ctx.setLineDash([]);
+
+                    // 인력 도트 — 바깥→중심으로 흘러들어오는 애니메이션
+                    const tp = (Date.now() * 0.0009) % 1;
+                    for (let i = 0; i < vis.dotCount; i++) {
+                      const baseAngle = (i / vis.dotCount) * Math.PI * 2;
+                      const progress  = (tp + i / vis.dotCount) % 1;
+                      const dotDist   = vis.radius * 0.90 * (1 - progress);
+                      const dotAlpha  = 0.80 * (1 - progress * progress);
+                      const dotSize   = 1.8 + lv * 0.6;
+                      ctx.fillStyle = `rgba(${vis.dotColor},${dotAlpha})`;
+                      ctx.beginPath();
+                      ctx.arc(
+                        mcx + Math.cos(baseAngle) * dotDist,
+                        mcy + Math.sin(baseAngle) * dotDist,
+                        dotSize, 0, Math.PI * 2
+                      );
+                      ctx.fill();
+                    }
+
+                    // 자석 본체
+                    ctx.fillStyle = vis.fill;
+                    ctx.strokeStyle = vis.stroke;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(mcx, mcy, vis.bodyR, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // N/S 극 표시
+                    const fs = Math.max(8, vis.bodyR * 0.60);
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.font = `bold ${fs}px Arial`;
+                    ctx.fillStyle = '#bfdbfe';
+                    ctx.fillText('N', mcx, mcy - vis.bodyR * 0.30);
+                    ctx.fillStyle = '#fca5a5';
+                    ctx.fillText('S', mcx, mcy + vis.bodyR * 0.36);
+
+                    // 레벨 배지 (우측 상단 원형)
+                    const bx = mcx + vis.bodyR * 0.72;
+                    const by = mcy - vis.bodyR * 0.72;
+                    ctx.fillStyle = vis.stroke;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 7px Arial';
+                    ctx.fillText(String(lv), bx, by);
+
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'alphabetic';
+                    ctx.restore();
+                  }
                 });
               }
 
@@ -1354,7 +1620,6 @@
                   const size = spring.size || 40;
                   const isSelected = selectedObject && selectedObject.type === 'spring' && selectedObject.index === index;
 
-                  // 선택된 경우 강조 테두리
                   if (isSelected) {
                     ctx.strokeStyle = '#fbbf24';
                     ctx.lineWidth = 4;
@@ -1363,14 +1628,12 @@
                     ctx.setLineDash([]);
                   }
 
-                  // 스프링 본체 (녹색 계열)
                   ctx.fillStyle = '#4ade80';
                   ctx.strokeStyle = isSelected ? '#fbbf24' : '#22c55e';
                   ctx.lineWidth = 3;
                   ctx.fillRect(x, y, size, size);
                   ctx.strokeRect(x, y, size, size);
 
-                  // 화살표 그리기 (방향 표시)
                   const arrowColor = '#166534';
                   ctx.fillStyle = arrowColor;
                   ctx.strokeStyle = arrowColor;
@@ -1378,20 +1641,18 @@
 
                   const centerX = x + size / 2;
                   const centerY = y + size / 2;
-                  const angle = spring.angle || 0; // 라디안
+                  const angle = spring.angle || 0;
                   const arrowLength = size * 0.6;
 
                   ctx.save();
                   ctx.translate(centerX, centerY);
                   ctx.rotate(angle);
 
-                  // 화살표 선
                   ctx.beginPath();
                   ctx.moveTo(-arrowLength/2, 0);
                   ctx.lineTo(arrowLength/2, 0);
                   ctx.stroke();
 
-                  // 화살표 머리
                   ctx.beginPath();
                   ctx.moveTo(arrowLength/2, 0);
                   ctx.lineTo(arrowLength/2 - 8, -6);
@@ -1401,9 +1662,7 @@
 
                   ctx.restore();
 
-                  // 선택된 스프링에 버튼 표시
                   if (isSelected) {
-                    // 각도 조정 버튼 (왼쪽)
                     ctx.fillStyle = '#3b82f6';
                     ctx.strokeStyle = '#1d4ed8';
                     ctx.lineWidth = 2;
@@ -1417,7 +1676,6 @@
                     ctx.textBaseline = 'middle';
                     ctx.fillText('↶', x - 15, y + size/2);
 
-                    // 각도 조정 버튼 (오른쪽)
                     ctx.fillStyle = '#3b82f6';
                     ctx.strokeStyle = '#1d4ed8';
                     ctx.beginPath();
@@ -1427,19 +1685,13 @@
                     ctx.fillStyle = '#ffffff';
                     ctx.fillText('↷', x + size + 15, y + size/2);
 
-                    // 삭제 버튼 (상단)
-                    ctx.fillStyle = '#ef4444';
-                    ctx.strokeStyle = '#b91c1c';
-                    ctx.beginPath();
-                    ctx.arc(x + size/2, y - 15, 12, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.stroke();
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = 'bold 14px Arial';
-                    ctx.fillText('×', x + size/2, y - 15);
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'alphabetic';
                   }
                 });
               }
+
+
 
               // 파란 구슬에 선택 표시
               if (isDevMode && selectedObject && selectedObject.type === 'shooter') {
@@ -1584,65 +1836,111 @@
               // 떨어지는 빨간 구슬 렌더링
               fallingMarbles.forEach(fm => {
                 const progress = fm.fallProgress;
-                const pushPhase = Math.min(progress / 0.6, 1); // 0.4 -> 0.6: 밀림이 더 천천히
-                const fadePhase = Math.max((progress - 0.6) / 0.4, 0); // 페이드 타이밍 조정
-                // easeOutCubic: 빠르게 시작, 천천히 끝남 (스르륵 미끄러지는 느낌)
-                const easedPush = 1 - Math.pow(1 - pushPhase, 3);
-                const offsetX = fm.pushDirectionX * EDGE_PUSH_DISTANCE * easedPush;
-                const offsetY = fm.pushDirectionY * EDGE_PUSH_DISTANCE * easedPush;
-                const currentSize = fm.startSize * (1 - fadePhase * 0.9);
-                const alpha = 1 - (fadePhase * fadePhase);
 
-                ctx.save();
-                ctx.globalAlpha = alpha;
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-                ctx.shadowBlur = fadePhase * 15;
-                ctx.fillStyle = '#ef4444';
-                ctx.beginPath();
-                ctx.arc(
-                  fm.startX + BOARD_OFFSET + offsetX,
-                  fm.startY + BOARD_OFFSET + offsetY,
-                  currentSize,
-                  0,
-                  Math.PI * 2
-                );
-                ctx.fill();
-                ctx.strokeStyle = '#7f1d1d';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                ctx.restore();
+                if (fm.fallType === 'sinkhole') {
+                  // ── 씽크홀 흡입 애니메이션 ──────────────────────
+                  // easeInQuad: 처음에 느리다가 빨라지며 빨려들어감
+                  const eased = progress * progress;
+                  const pullX = fm.pushDirectionX * fm.pullDistance * eased;
+                  const pullY = fm.pushDirectionY * fm.pullDistance * eased;
+                  const currentSize = fm.startSize * (1 - eased);     // 줄어들며 사라짐
+                  const alpha = 1 - eased * eased;
+                  if (currentSize <= 0.5) return;
+                  ctx.save();
+                  ctx.globalAlpha = alpha;
+                  ctx.fillStyle = fm.isRed ? '#ef4444' : '#3b82f6';
+                  ctx.beginPath();
+                  ctx.arc(
+                    fm.startX + BOARD_OFFSET + pullX,
+                    fm.startY + BOARD_OFFSET + pullY,
+                    currentSize, 0, Math.PI * 2
+                  );
+                  ctx.fill();
+                  ctx.restore();
+
+                } else {
+                  // ── 기존 경계 낙하 애니메이션 ────────────────────
+                  const pushPhase = Math.min(progress / 0.6, 1);
+                  const fadePhase = Math.max((progress - 0.6) / 0.4, 0);
+                  const easedPush = 1 - Math.pow(1 - pushPhase, 3);
+                  const offsetX = fm.pushDirectionX * EDGE_PUSH_DISTANCE * easedPush;
+                  const offsetY = fm.pushDirectionY * EDGE_PUSH_DISTANCE * easedPush;
+                  const currentSize = fm.startSize * (1 - fadePhase * 0.9);
+                  const alpha = 1 - (fadePhase * fadePhase);
+
+                  ctx.save();
+                  ctx.globalAlpha = alpha;
+                  ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+                  ctx.shadowBlur = fadePhase * 15;
+                  ctx.fillStyle = '#ef4444';
+                  ctx.beginPath();
+                  ctx.arc(
+                    fm.startX + BOARD_OFFSET + offsetX,
+                    fm.startY + BOARD_OFFSET + offsetY,
+                    currentSize, 0, Math.PI * 2
+                  );
+                  ctx.fill();
+                  ctx.strokeStyle = '#7f1d1d';
+                  ctx.lineWidth = 2;
+                  ctx.stroke();
+                  ctx.restore();
+                }
               });
 
               // 떨어지는 파란 구슬 렌더링
               if (shooterFalling) {
                 const progress = shooterFalling.fallProgress;
-                const pushPhase = Math.min(progress / 0.6, 1); // 0.4 -> 0.6: 밀림이 더 천천히
-                const fadePhase = Math.max((progress - 0.6) / 0.4, 0); // 페이드 타이밍 조정
-                // easeOutCubic: 빠르게 시작, 천천히 끝남 (스르륵 미끄러지는 느낌)
-                const easedPush = 1 - Math.pow(1 - pushPhase, 3);
-                const offsetX = shooterFalling.pushDirectionX * EDGE_PUSH_DISTANCE * easedPush;
-                const offsetY = shooterFalling.pushDirectionY * EDGE_PUSH_DISTANCE * easedPush;
-                const currentSize = shooterFalling.startSize * (1 - fadePhase * 0.9);
-                const alpha = 1 - (fadePhase * fadePhase);
 
-                ctx.save();
-                ctx.globalAlpha = alpha;
-                ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-                ctx.shadowBlur = fadePhase * 15;
-                ctx.fillStyle = '#3b82f6';
-                ctx.beginPath();
-                ctx.arc(
-                  shooterFalling.startX + BOARD_OFFSET + offsetX,
-                  shooterFalling.startY + BOARD_OFFSET + offsetY,
-                  currentSize,
-                  0,
-                  Math.PI * 2
-                );
-                ctx.fill();
-                ctx.strokeStyle = '#1e40af';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                ctx.restore();
+                if (shooterFalling.fallType === 'sinkhole') {
+                  // ── 씽크홀 흡입 (제자리에서 줄어들며 빨려들어감) ──
+                  const eased = progress * progress;
+                  const pullX = shooterFalling.pushDirectionX * shooterFalling.pullDistance * eased;
+                  const pullY = shooterFalling.pushDirectionY * shooterFalling.pullDistance * eased;
+                  const currentSize = shooterFalling.startSize * (1 - eased);
+                  const alpha = 1 - eased * eased;
+                  if (currentSize > 0.5) {
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.beginPath();
+                    ctx.arc(
+                      shooterFalling.startX + BOARD_OFFSET + pullX,
+                      shooterFalling.startY + BOARD_OFFSET + pullY,
+                      currentSize, 0, Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.strokeStyle = '#1e40af';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                    ctx.restore();
+                  }
+                } else {
+                  // ── 기존 경계 낙하 (외곽으로 밀려남) ──────────────
+                  const pushPhase = Math.min(progress / 0.6, 1);
+                  const fadePhase = Math.max((progress - 0.6) / 0.4, 0);
+                  const easedPush = 1 - Math.pow(1 - pushPhase, 3);
+                  const offsetX = shooterFalling.pushDirectionX * EDGE_PUSH_DISTANCE * easedPush;
+                  const offsetY = shooterFalling.pushDirectionY * EDGE_PUSH_DISTANCE * easedPush;
+                  const currentSize = shooterFalling.startSize * (1 - fadePhase * 0.9);
+                  const alpha = 1 - (fadePhase * fadePhase);
+
+                  ctx.save();
+                  ctx.globalAlpha = alpha;
+                  ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+                  ctx.shadowBlur = fadePhase * 15;
+                  ctx.fillStyle = '#3b82f6';
+                  ctx.beginPath();
+                  ctx.arc(
+                    shooterFalling.startX + BOARD_OFFSET + offsetX,
+                    shooterFalling.startY + BOARD_OFFSET + offsetY,
+                    currentSize, 0, Math.PI * 2
+                  );
+                  ctx.fill();
+                  ctx.strokeStyle = '#1e40af';
+                  ctx.lineWidth = 2;
+                  ctx.stroke();
+                  ctx.restore();
+                }
               }
 
               // 빨간 구슬 렌더링
@@ -1871,10 +2169,12 @@
             if (distance < physicsConfig.puckRadius * 3) {
               setGameState('aiming');
               setAimEnd({ x, y });
+              pointerDownPosRef.current = { x, y }; // 시작점 기록 (드래그 임계값용)
             }
           };
 
           const aimEndRef = useRef(null);
+          const pointerDownPosRef = useRef(null); // 터치 시작점 (드래그 임계값 계산용)
 
           const handlePointerMove = (e) => {
             const canvas = canvasRef.current;
@@ -1926,6 +2226,16 @@
 
             if (gameState !== 'aiming') return;
 
+            // 모바일 터치 과민감 방지: 최소 드래그 거리 임계값
+            // 손가락을 살짝 올려놓기만 해도 조준선이 흔들리는 문제 해결
+            const MIN_DRAG_THRESHOLD = isMobile ? 8 : 3; // 모바일은 8px, 데스크탑은 3px
+            if (pointerDownPosRef.current) {
+              const ddx = x - pointerDownPosRef.current.x;
+              const ddy = y - pointerDownPosRef.current.y;
+              const dragDist = Math.sqrt(ddx * ddx + ddy * ddy);
+              if (dragDist < MIN_DRAG_THRESHOLD) return; // 임계값 미만은 무시
+            }
+
             aimEndRef.current = { x, y };
 
             // requestAnimationFrame으로 부드럽게 업데이트
@@ -1976,6 +2286,7 @@
 
             setAimEnd(null);
             aimEndRef.current = null;
+            pointerDownPosRef.current = null; // 시작점 초기화
           };
 
           const handleNextStage = () => {
@@ -2128,16 +2439,16 @@
           };
 
           return (
-            <div className="min-h-screen bg-gradient-to-br from-amber-950 via-stone-900 to-black flex items-start justify-center p-2 sm:p-4">
-              <div className="w-full max-w-[724px]" style={!isDevMode ? {
+            <div className={`bg-gradient-to-br from-amber-950 via-stone-900 to-black ${isMobile ? 'min-h-screen flex flex-col' : 'min-h-screen flex items-start justify-center p-2 sm:p-4'}`}>
+              <div className={`${isMobile ? 'w-full flex-1 flex flex-col' : 'w-full max-w-[724px]'}`} style={!isDevMode && !isMobile ? {
                 transform: `scale(${scale})`,
                 transformOrigin: 'top center'
               } : {}}>
-                                  <div className="bg-stone-800 rounded-lg shadow-2xl p-[10px] border-2 border-amber-900">
-                                    <div className="mb-4">
-                                      <div className="flex justify-between items-center mb-3">
-                                        <h1 className="text-2xl sm:text-3xl font-bold text-amber-100 flex items-center gap-2">
-                                          <div className="w-8 h-8 bg-amber-700 rounded-full shadow-lg"></div>
+                                  <div className={`bg-stone-800 shadow-2xl border-amber-900 ${isMobile ? 'flex-1 flex flex-col border-0' : 'rounded-lg shadow-2xl p-[10px] border-2'}`}>
+                                    <div className={isMobile ? 'px-2 pt-2 pb-1' : 'mb-4'}>
+                                      <div className="flex justify-between items-center mb-2">
+                                        <h1 className={`font-bold text-amber-100 flex items-center gap-2 ${isMobile ? 'text-lg' : 'text-2xl sm:text-3xl mb-1'}`}>
+                                          <div className={`bg-amber-700 rounded-full shadow-lg ${isMobile ? 'w-5 h-5' : 'w-8 h-8'}`}></div>
                                           알까기 퍼즐
                                         </h1>
                                         <div className="flex gap-1 sm:gap-2">
@@ -2216,42 +2527,43 @@
                                       </div>
                 
                                       {/* 스테이지 선택 컨트롤 */}
-                                      <div className="flex items-center justify-between mb-3 bg-stone-700 rounded-lg p-3 border border-amber-900">
+                                      <div className={`flex items-center justify-between bg-stone-700 rounded-lg border border-amber-900 ${isMobile ? 'p-1.5 mb-1' : 'mb-3 p-3'}`}>
                                         <button
                                           onClick={handlePrevStage}
                                           disabled={currentStage === 1 || isDevMode}
                                           className="p-1 sm:p-2 bg-stone-600 hover:bg-stone-500 disabled:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition-colors active:animate-bounce-sm"
                                         >
-                                          <ChevronLeft size={20} className="text-amber-100" />
+                                          <ChevronLeft size={isMobile ? 16 : 20} className="text-amber-100" />
                                         </button>
                 
                                                               <div className="flex-1 mx-1 sm:mx-3">
                                                                 {currentMode === 'userStages' ? (
                                                                   <div className="text-center">
-                                                                    <div className="text-cyan-100 font-bold text-base sm:text-lg">
+                                                                    <div className={`text-cyan-100 font-bold ${isMobile ? 'text-sm' : 'text-base sm:text-lg'}`}>
                                                                       📁 사용자 스테이지 {currentUserStageIndex + 1} / {userStages.length}
                                                                     </div>
-                                                                    <div className="text-slate-400 text-xs sm:text-sm mt-1">
-                                                                      {userStages[currentUserStageIndex]?.name || '스테이지 없음'}
-                                                                    </div>
-                                                                    <div className="flex justify-center mt-1" style={{height: '16px'}}>
-                                                                      {/* 빈 공간으로 높이 통일 */}
-                                                                    </div>
+                                                                    {!isMobile && (
+                                                                      <div className="text-slate-400 text-xs sm:text-sm mt-1">
+                                                                        {userStages[currentUserStageIndex]?.name || '스테이지 없음'}
+                                                                      </div>
+                                                                    )}
                                                                   </div>
                                                                 ) : (
                                                                   <div className="text-center">
-                                                                    <div className="text-amber-100 font-bold text-base sm:text-lg">
+                                                                    <div className={`text-amber-100 font-bold ${isMobile ? 'text-sm' : 'text-base sm:text-lg'}`}>
                                                                       스테이지 {currentStage} / {stages.length}
                                                                     </div>
-                                                                    <div className="text-slate-400 text-xs sm:text-sm mt-1">
-                                                                      {stages.find(s => s.id === currentStage)?.name}
-                                                                    </div>
-                                                                    {/* Display best stars for current stage */}
-                                                                    <div className="flex justify-center mt-1">
+                                                                    {!isMobile && (
+                                                                      <div className="text-slate-400 text-xs sm:text-sm mt-1">
+                                                                        {stages.find(s => s.id === currentStage)?.name}
+                                                                      </div>
+                                                                    )}
+                                                                    {/* 현재 스테이지 최고 별점 */}
+                                                                    <div className="flex justify-center mt-0.5">
                                                                       {[...Array(3)].map((_, i) => {
                                                                         const bestStars = parseInt(localStorage.getItem(`stage_${currentStage}_stars`) || '0', 10);
                                                                         return (
-                                                                          <Star key={i} size={16} className={`mx-0.5 ${i < bestStars ? 'text-yellow-400' : 'text-gray-500'}`} />
+                                                                          <Star key={i} size={isMobile ? 12 : 16} className={`mx-0.5 ${i < bestStars ? 'text-yellow-400' : 'text-gray-500'}`} />
                                                                         );
                                                                       })}
                                                                     </div>
@@ -2263,35 +2575,47 @@
                                           disabled={currentStage === stages.length || isDevMode}
                                           className="p-1 sm:p-2 bg-stone-600 hover:bg-stone-500 disabled:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition-colors active:animate-bounce-sm"
                                         >
-                                          <ChevronRight size={20} className="text-amber-100" />
+                                          <ChevronRight size={isMobile ? 16 : 20} className="text-amber-100" />
                                         </button>
                                       </div>
                 
-                                                          <div className="flex justify-between items-center text-xs sm:text-sm">
-                                                            <div className="text-slate-300">
-                                                              남은 기회: <span className="text-yellow-400 font-bold">{attemptsLeft === Infinity ? '무한' : attemptsLeft}</span>
-                                                            </div>
-                                                            <div className="text-slate-300 flex items-center gap-1">
-                                                              <Lightbulb size={14} className="text-yellow-400" />
-                                                              힌트: <span className="text-yellow-400 font-bold">{hintsRemaining}</span>
-                                                            </div>
-                                                          </div>
-                                                          <div className="flex justify-between items-center text-xs sm:text-sm mt-2">
-                                                            <div className="text-slate-300">
-                                                              점수: <span className="text-green-400 font-bold">{score}</span>
-                                                            </div>
-                                                            <div className="text-slate-300">
-                                                              최고 점수: <span className="text-purple-400 font-bold">{highScore}</span>
-                                                            </div>
-                                                          </div>
+                                      {/* 남은 기회 / 힌트 / 점수 — 모바일에서는 한 줄 압축 */}
+                                      {isMobile ? (
+                                        <div className="flex justify-between items-center text-xs px-1 pb-1">
+                                          <span className="text-slate-300">기회: <span className="text-yellow-400 font-bold">{attemptsLeft === Infinity ? '∞' : attemptsLeft}</span></span>
+                                          <span className="text-slate-300 flex items-center gap-0.5"><Lightbulb size={11} className="text-yellow-400" /><span className="text-yellow-400 font-bold">{hintsRemaining}</span></span>
+                                          <span className="text-slate-300">점수: <span className="text-green-400 font-bold">{score}</span></span>
+                                          <span className="text-slate-300">최고: <span className="text-purple-400 font-bold">{highScore}</span></span>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <div className="flex justify-between items-center text-xs sm:text-sm">
+                                            <div className="text-slate-300">
+                                              남은 기회: <span className="text-yellow-400 font-bold">{attemptsLeft === Infinity ? '무한' : attemptsLeft}</span>
+                                            </div>
+                                            <div className="text-slate-300 flex items-center gap-1">
+                                              <Lightbulb size={14} className="text-yellow-400" />
+                                              힌트: <span className="text-yellow-400 font-bold">{hintsRemaining}</span>
+                                            </div>
+                                          </div>
+                                          <div className="flex justify-between items-center text-xs sm:text-sm mt-2">
+                                            <div className="text-slate-300">
+                                              점수: <span className="text-green-400 font-bold">{score}</span>
+                                            </div>
+                                            <div className="text-slate-300">
+                                              최고 점수: <span className="text-purple-400 font-bold">{highScore}</span>
+                                            </div>
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
                 
-                                    <div className="relative">
+                                    <div className={`relative ${isMobile ? 'flex-1' : ''}`}>
                                                           <canvas
                                                             ref={canvasRef}
                                                             width={CANVAS_SIZE}
                                                             height={CANVAS_SIZE}
-                                                            className="border-4 rounded-lg cursor-crosshair bg-stone-900 shadow-2xl border-amber-900"
+                                                            className={`cursor-crosshair bg-stone-900 shadow-2xl ${isMobile ? 'w-full h-auto border-2 border-amber-900' : 'border-4 rounded-lg border-amber-900'}`}
                                                             style={{ width: '100%', height: 'auto', aspectRatio: '1 / 1', touchAction: 'none' }}
                                                             onPointerDown={handlePointerDown}
                                                             onPointerMove={handlePointerMove}
