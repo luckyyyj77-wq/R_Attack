@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(start \"\" \"C:\\Users\\lucky\\Desktop\\R_Attack\\R_Attack.html\")",
+      "Bash(powershell -Command \"(Get-Content R_Attack.html) -replace ''mass: 2, isHeavy: true'', ''mass: 1, isHeavy: true'' -replace ''mass: 3, isHeavy: true'', ''mass: 1, isHeavy: true'' | Set-Content R_Attack.html\")",
+      "Bash(powershell -Command:*)",
+      "Bash(python fix_stages.py:*)",
+      "Bash(dir:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
