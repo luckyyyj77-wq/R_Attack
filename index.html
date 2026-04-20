@@ -392,6 +392,10 @@
           const [highScore, setHighScore] = useState(0); // New state for high score
           const collisionPopRef = useRef({}); // New ref to track marble collision for pop animation
           const springCooldownRef = useRef({}); // 스프링 재진입 방지 쿨다운 {marbleId: timestamp}
+          const [dynamicObstacles, setDynamicObstacles] = useState([]); // 런타임 장애물 (크런치 조각 포함)
+          const crunchCooldownRef = useRef({}); // 크런치 재충돌 방지 {obstacleId: timestamp}
+          // 렌더 RAF 클로저용 — 항상 최신 state를 참조
+          const renderStateRef = useRef({});
           const [particles, setParticles] = useState([]); // New state for particles
           const [aimEnd, setAimEnd] = useState(null);
           const [isPaused, setIsPaused] = useState(false); // New state for pause functionality
@@ -404,6 +408,8 @@
           const [showModeMenu, setShowModeMenu] = useState(false); // 모드 메뉴 표시 상태
           const [currentMode, setCurrentMode] = useState('puzzle'); // 현재 게임 모드 (puzzle, multi, ai, custom, userStages)
           const [gameHistory, setGameHistory] = useState([]); // UNDO를 위한 게임 상태 히스토리
+          const [editorHistory, setEditorHistory] = useState([]); // 에디터 undo 스택
+          const [editorFuture,  setEditorFuture]  = useState([]); // 에디터 redo 스택
 
           // 사용자 정의 스테이지 관리
           const [userStages, setUserStages] = useState(() => {
@@ -461,7 +467,7 @@
           // 레벨 에디터 상태
           const [isTestMode, setIsTestMode] = useState(false); // 테스트 모드 (플레이 가능)
           const [selectedTool, setSelectedTool] = useState(null); // 선택된 툴 (marble, shooter, spring, wall 등)
-          const [placementMode, setPlacementMode] = useState('select'); // select, place, delete
+          const [placementMode, setPlacementMode] = useState('move'); // move(손바닥), inspect(검지), place, delete
 
           // 조정 가능한 물리 법칙
           const [physicsConfig, setPhysicsConfig] = useState({
@@ -489,6 +495,31 @@
           // 선택된 오브젝트 상태
           const [selectedObject, setSelectedObject] = useState(null); // { type: 'spring'/'shooter', index: 0 }
           const animationRef = useRef(null);
+
+          // 에디터 undo/redo — devStage 변경 시 이 함수로만 변경
+          const editorSetDevStage = (newStage, skipHistory = false) => {
+            if (!skipHistory) {
+              setEditorHistory(h => [...h.slice(-49), devStage]); // 최대 50단계
+              setEditorFuture([]);
+            }
+            setDevStage(newStage);
+          };
+          const editorUndo = () => {
+            if (editorHistory.length === 0) return;
+            setEditorFuture(f => [devStage, ...f]);
+            const prev = editorHistory[editorHistory.length - 1];
+            setEditorHistory(h => h.slice(0, -1));
+            setDevStage(prev);
+            setSelectedObject(null);
+          };
+          const editorRedo = () => {
+            if (editorFuture.length === 0) return;
+            setEditorHistory(h => [...h, devStage]);
+            const next = editorFuture[0];
+            setEditorFuture(f => f.slice(1));
+            setDevStage(next);
+            setSelectedObject(null);
+          };
           const stuckFrameCountRef = useRef(0); // 물리 엔진 멈춤 감지
           const lastPositionsRef = useRef({ shooter: null, marbles: [] }); // 이전 프레임 위치
 
@@ -666,6 +697,7 @@
             { id: 17, name: "스테이지 17: 자석 Lv.1", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 220, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'magnet', x: 250, y: 340, level: 1 }] },
             { id: 18, name: "스테이지 18: 자석 Lv.2+벽", marbles: [{ x: 120, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 120, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 220, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 160, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [{ type: 'magnet', x: 250, y: 320, level: 2 }, { type: 'wall', x: 160, y: 295, width: 80, height: 14 }, { type: 'wall', x: 310, y: 295, width: 80, height: 14 }] },
             { id: 19, name: "스테이지 19: 강력 자석 Lv.3", marbles: [{ x: 100, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }, { x: 400, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 200, vx: 0, vy: 0, mass: 1, isHeavy: true }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 2, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'magnet', x: 250, y: 340, level: 3 }] },
+            { id: 20, name: "스테이지 20: 크런치 장애물", marbles: [{ x: 120, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 380, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 250, y: 80, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 1, 2: 2, 1: 3 }, obstacles: [{ type: 'crunch', x: 250, y: 280, radius: 22 }, { type: 'crunch', x: 150, y: 200, radius: 22 }, { type: 'crunch', x: 350, y: 200, radius: 22 }] },
 
             // 스테이지 20-29: 중급 난이도
             { id: 20, name: "Stage 20", marbles: [{ x: 250, y: 100, vx: 0, vy: 0, mass: 1 }, { x: 350, y: 180, vx: 0, vy: 0, mass: 1 }, { x: 320, y: 280, vx: 0, vy: 0, mass: 1 }, { x: 180, y: 280, vx: 0, vy: 0, mass: 1 }, { x: 150, y: 180, vx: 0, vy: 0, mass: 1 }], shooter: { x: 250, y: 450, mass: 1 }, maxAttempts: 3, starCriteria: { 3: 2, 2: 3, 1: 4 }, obstacles: [] },
@@ -893,6 +925,10 @@
               // 물리 엔진 정지 카운터 리셋
               stuckFrameCountRef.current = 0;
               lastPositionsRef.current = { shooter: null, marbles: [] };
+              // 크런치 포함 장애물을 동적 state로 복사 (파괴 가능하도록)
+              const stageObstacles = (isDevMode ? devStage : stages.find(s => s.id === stageNum))?.obstacles || [];
+              setDynamicObstacles(stageObstacles.map((o, i) => ({ ...o, _id: `obs_${i}_${Date.now()}` })));
+              crunchCooldownRef.current = {};
             }
           };
 
@@ -1229,29 +1265,138 @@
                 const allMarbles = [newShooter, ...newMarbles];
                 const currentStageDataForObs = isDevMode ? devStage : stages.find(s => s.id === currentStage);
 
-                if (currentStageDataForObs && currentStageDataForObs.obstacles && currentStageDataForObs.obstacles.length > 0) {
+                // ── crunch 충돌 처리 (dynamicObstacles 기반) ──────────────
+                const now = Date.now();
+                const crunchToRemove = new Set();
+                const crunchFragmentsToAdd = [];
+
+                allMarbles.forEach(marble => {
+                  dynamicObstacles.forEach(obstacle => {
+                    if (obstacle.type !== 'crunch' || obstacle._fragment) return;
+                    if (crunchToRemove.has(obstacle._id)) return;
+
+                    const cr = obstacle.radius || 22;
+                    const dx = marble.x - obstacle.x;
+                    const dy = marble.y - obstacle.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const r = physicsConfig.puckRadius;
+
+                    if (dist < cr + r && dist > 0.01) {
+                      // 쿨다운 체크 (재충돌 방지)
+                      const coolKey = obstacle._id;
+                      if (crunchCooldownRef.current[coolKey] && now - crunchCooldownRef.current[coolKey] < 200) return;
+                      crunchCooldownRef.current[coolKey] = now;
+
+                      // 반동 — obstacle.restitution 커스텀 (기본 0.25 = 약한 반동)
+                      const restitution = obstacle.restitution ?? 0.25;
+                      const nx = dx / dist;
+                      const ny = dy / dist;
+                      const overlap = cr + r - dist;
+                      marble.x += nx * overlap * 0.5;
+                      marble.y += ny * overlap * 0.5;
+                      const dot = marble.vx * nx + marble.vy * ny;
+                      marble.vx = (marble.vx - 2 * dot * nx) * restitution;
+                      marble.vy = (marble.vy - 2 * dot * ny) * restitution;
+
+                      crunchToRemove.add(obstacle._id);
+                      playSound('collision');
+
+                      // 조각 수, 속도, TTL 커스텀
+                      const fragCount = obstacle.fragCount ?? 4;
+                      const fragSpeed = obstacle.fragSpeed ?? 2.5;
+                      const fragTTL   = obstacle.fragTTL   ?? 1200;
+                      for (let i = 0; i < fragCount; i++) {
+                        const angle = (i / fragCount) * Math.PI * 2 + Math.PI / 4;
+                        const speed = fragSpeed + Math.random() * 2.0;
+                        crunchFragmentsToAdd.push({
+                          type: 'crunch',
+                          _fragment: true,
+                          _id: `frag_${obstacle._id}_${i}_${now}`,
+                          x: obstacle.x + Math.cos(angle) * (cr * 0.5),
+                          y: obstacle.y + Math.sin(angle) * (cr * 0.5),
+                          vx: Math.cos(angle) * speed,
+                          vy: Math.sin(angle) * speed,
+                          radius: (cr * 0.38),
+                          _angle: angle,
+                          _born: now,
+                          _ttl: fragTTL,
+                        });
+                      }
+                    }
+                  });
+                });
+
+                // 조각 물리 업데이트 + 만료 제거
+                let nextDynObs = dynamicObstacles
+                  .filter(o => !crunchToRemove.has(o._id))
+                  .map(o => {
+                    if (!o._fragment) return o;
+                    const age = now - o._born;
+                    if (age > o._ttl) return null; // 만료
+                    // 조각 이동 + 마찰
+                    const nx = { ...o, x: o.x + (o.vx || 0), y: o.y + (o.vy || 0), vx: (o.vx || 0) * 0.92, vy: (o.vy || 0) * 0.92 };
+                    return nx;
+                  })
+                  .filter(Boolean);
+
+                // 조각과 공 충돌 (조각은 공을 살짝 밀어냄)
+                allMarbles.forEach(marble => {
+                  nextDynObs.forEach(obs => {
+                    if (!obs._fragment) return;
+                    const fr = obs.radius;
+                    const dx = marble.x - obs.x;
+                    const dy = marble.y - obs.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const r = physicsConfig.puckRadius;
+                    if (dist < fr + r && dist > 0.01) {
+                      const nx = dx / dist;
+                      const ny = dy / dist;
+                      const overlap = fr + r - dist;
+                      marble.x += nx * overlap * 0.5;
+                      marble.y += ny * overlap * 0.5;
+                      marble.vx += nx * 0.5;
+                      marble.vy += ny * 0.5;
+                    }
+                  });
+                });
+
+                if (crunchToRemove.size > 0 || crunchFragmentsToAdd.length > 0) {
+                  setDynamicObstacles([...nextDynObs, ...crunchFragmentsToAdd]);
+                } else if (nextDynObs.some(o => o._fragment)) {
+                  // 조각 이동 업데이트
+                  setDynamicObstacles(nextDynObs);
+                }
+
+                if (dynamicObstacles.length > 0) {
                   allMarbles.forEach(marble => {
-                    currentStageDataForObs.obstacles.forEach(obstacle => {
+                    dynamicObstacles.forEach(obstacle => {
+                      if (obstacle.type === 'crunch') return; // crunch는 위에서 처리
                       const r = physicsConfig.puckRadius;
 
-                      // ── type: 'wall' (막힌 벽) ──────────────────────
+                      // ── type: 'wall' (막힌 벽, OBB 회전 지원) ──────────────────────
                       if (!obstacle.type || obstacle.type === 'wall') {
-                        // 원과 AABB 최근접점 계산 (버그 수정: marble.y 사용)
-                        const closestX = Math.max(obstacle.x, Math.min(marble.x, obstacle.x + obstacle.width));
-                        const closestY = Math.max(obstacle.y, Math.min(marble.y, obstacle.y + obstacle.height));
-                        const dx = marble.x - closestX;
-                        const dy = marble.y - closestY;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const angle = obstacle.angle || 0;
+                        const hw = (obstacle.width || 80) / 2;
+                        const hh = (obstacle.height || 16) / 2;
+                        const cx = obstacle.x + hw;
+                        const cy = obstacle.y + hh;
+                        const cosA = Math.cos(-angle), sinA = Math.sin(-angle);
+                        const lx = cosA * (marble.x - cx) - sinA * (marble.y - cy);
+                        const ly = sinA * (marble.x - cx) + cosA * (marble.y - cy);
+                        const clx = Math.max(-hw, Math.min(lx, hw));
+                        const cly = Math.max(-hh, Math.min(ly, hh));
+                        const dlx = lx - clx, dly = ly - cly;
+                        const dist = Math.sqrt(dlx * dlx + dly * dly);
 
                         if (dist < r && dist > 0.001) {
                           playSound('collision');
+                          const lnx = dlx / dist, lny = dly / dist;
+                          const cosB = Math.cos(angle), sinB = Math.sin(angle);
+                          const nx = cosB * lnx - sinB * lny;
+                          const ny = sinB * lnx + cosB * lny;
                           const overlap = r - dist;
-                          const nx = dx / dist;
-                          const ny = dy / dist;
-                          // 겹침 해소 (1.02: 미세 여유)
                           marble.x += nx * overlap * 1.02;
                           marble.y += ny * overlap * 1.02;
-                          // 반사 (restitution 속성 지원, 기본 bounceDamping)
                           const restitution = obstacle.restitution !== undefined ? obstacle.restitution : physicsConfig.bounceDamping;
                           const dot = marble.vx * nx + marble.vy * ny;
                           marble.vx -= (1 + restitution) * dot * nx;
@@ -1261,26 +1406,39 @@
                         }
                       }
 
-                      // ── type: 'magnet' (자기장 인력 — 3단계 레벨) ────────
+                      // ── type: 'magnet' (자기장 인력 — 완전 커스텀) ────────
                       else if (obstacle.type === 'magnet') {
-                        // level 1 (중형): 반경 85  | level 2 (대형): 반경 125 | level 3 (초강력): 반경 170
-                        const MAGNET_LEVELS = {
+                        // level 프리셋 → 커스텀 파라미터로 폴백
+                        const MAGNET_PRESETS = {
                           1: { radius: 85,  strength: 0.48 },
                           2: { radius: 125, strength: 0.72 },
                           3: { radius: 170, strength: 0.95 },
                         };
-                        const lv   = MAGNET_LEVELS[obstacle.level || 1];
-                        const range    = lv.radius;
-                        const strength = lv.strength;
+                        const preset = MAGNET_PRESETS[obstacle.level || 1];
+                        const range    = obstacle.radius    ?? preset.radius;
+                        const strength = obstacle.strength  ?? preset.strength;
+                        const r = physicsConfig.puckRadius;
 
                         const dx = obstacle.x - marble.x;
                         const dy = obstacle.y - marble.y;
                         const dist = Math.sqrt(dx * dx + dy * dy);
-                        if (dist < range && dist > 5) {
+
+                        const minDist = r * 1.5;
+                        if (dist < range && dist > minDist) {
                           const falloff = 1 - (dist / range);
                           const force   = strength * falloff;
                           marble.vx += (dx / dist) * force;
                           marble.vy += (dy / dist) * force;
+
+                          const maxSpeed = obstacle.maxSpeed ?? (8 + strength * 4);
+                          const speed = Math.sqrt(marble.vx * marble.vx + marble.vy * marble.vy);
+                          if (speed > maxSpeed) {
+                            marble.vx = (marble.vx / speed) * maxSpeed;
+                            marble.vy = (marble.vy / speed) * maxSpeed;
+                          }
+                        } else if (dist <= minDist && dist > 0.01) {
+                          marble.vx -= (dx / dist) * 0.3;
+                          marble.vy -= (dy / dist) * 0.3;
                         }
                       }
                     });
@@ -1290,15 +1448,16 @@
                 const marblesOnBoard = [];
                 const marblesFalling = [];
 
-                // 씽크홀 목록 미리 추출
-                const sinkholes = (currentStageDataForObs?.obstacles || []).filter(o => o.type === 'sinkhole');
+                // 씽크홀 목록 미리 추출 (dynamicObstacles 기반)
+                const sinkholes = dynamicObstacles.filter(o => o.type === 'sinkhole');
 
                 newMarbles.forEach(m => {
                     // 씽크홀 진입 판정 우선 (경계 낙하보다 먼저)
                     const suckedBy = sinkholes.find(sh => {
                         const dx = m.x - sh.x;
                         const dy = m.y - sh.y;
-                        return Math.sqrt(dx * dx + dy * dy) < sh.radius * 0.85; // 반경 85%부터 흡입
+                        const threshold = sh.threshold ?? 0.85; // 커스텀 흡입 시작 비율
+                        return Math.sqrt(dx * dx + dy * dy) < sh.radius * threshold;
                     });
                     if (suckedBy) {
                         if (!fallSoundPlayedThisFrame) { playSound('fall'); fallSoundPlayedThisFrame = true; }
@@ -1324,7 +1483,8 @@
                     const shooterSuckedBy = sinkholes.find(sh => {
                         const dx = newShooter.x - sh.x;
                         const dy = newShooter.y - sh.y;
-                        return Math.sqrt(dx * dx + dy * dy) < sh.radius * 0.85;
+                        const threshold = sh.threshold ?? 0.85;
+                        return Math.sqrt(dx * dx + dy * dy) < sh.radius * threshold;
                     });
                     if (shooterSuckedBy) {
                         if (!fallSoundPlayedThisFrame) playSound('fall');
@@ -1389,6 +1549,16 @@
 
 
 
+          // 렌더 RAF 클로저가 항상 최신 state를 볼 수 있도록 ref에 동기화
+          useEffect(() => {
+            renderStateRef.current = {
+              marbles, shooterMarble, gameState, aimEnd, fallingMarbles,
+              shooterFalling, particles, currentStage, dynamicObstacles,
+              devStage, isTestMode, selectedObject, isDevMode,
+              physicsConfig, placementMode
+            };
+          });
+
           // 렌더링 최적화를 위한 requestAnimationFrame 기반 렌더링
           useEffect(() => {
             const canvas = canvasRef.current;
@@ -1396,6 +1566,14 @@
 
             let renderAnimationId;
             const render = () => {
+              // 항상 최신 state 참조 (stale closure 방지)
+              const {
+                marbles, shooterMarble, gameState, aimEnd, fallingMarbles,
+                shooterFalling, particles, dynamicObstacles,
+                devStage, isTestMode, selectedObject, isDevMode,
+                physicsConfig
+              } = renderStateRef.current;
+
               const ctx = canvas.getContext('2d');
               ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
@@ -1415,24 +1593,33 @@
                 ctx.drawImage(woodTextureRef.current, BOARD_OFFSET, BOARD_OFFSET);
               }
 
-              // ── 장애물 렌더링 (type 별) ──────────────────────────────
-              const renderStageData = isDevMode ? devStage : stages.find(s => s.id === currentStage);
-              if (renderStageData && renderStageData.obstacles) {
-                renderStageData.obstacles.forEach(obstacle => {
+              // ── 장애물 렌더링 ─────────────────────────────────────────
+              // 편집 모드: devStage.obstacles 직접 참조 (dynamicObstacles는 테스트/플레이 전용)
+              const renderObstacles = (isDevMode && !isTestMode)
+                ? (devStage.obstacles || [])
+                : dynamicObstacles.filter(o => o.type !== 'crunch');
+              if (renderObstacles.length > 0) {
+                renderObstacles.forEach(obstacle => {
                   const ox = obstacle.x + BOARD_OFFSET;
                   const oy = obstacle.y + BOARD_OFFSET;
                   const ow = obstacle.width;
                   const oh = obstacle.height;
 
                   if (!obstacle.type || obstacle.type === 'wall') {
-                    // ── 막힌 벽: 브릭 패턴 ─────────────────────────
+                    // ── 막힌 벽: 브릭 패턴 (회전 지원) ─────────────────────────
                     ctx.save();
+                    const wallAngle = obstacle.angle || 0;
+                    const wcx = ox + ow / 2;
+                    const wcy = oy + oh / 2;
+                    ctx.translate(wcx, wcy);
+                    ctx.rotate(wallAngle);
+                    ctx.translate(-ow / 2, -oh / 2);
                     // 벽 본체
                     ctx.fillStyle = '#5c3a1e';
                     ctx.strokeStyle = '#3a2210';
                     ctx.lineWidth = 1.5;
                     ctx.beginPath();
-                    ctx.roundRect ? ctx.roundRect(ox, oy, ow, oh, 3) : ctx.rect(ox, oy, ow, oh);
+                    ctx.roundRect ? ctx.roundRect(0, 0, ow, oh, 3) : ctx.rect(0, 0, ow, oh);
                     ctx.fill();
                     ctx.stroke();
 
@@ -1440,24 +1627,24 @@
                     ctx.strokeStyle = 'rgba(0,0,0,0.35)';
                     ctx.lineWidth = 1;
                     const brickH = Math.max(8, oh / Math.max(1, Math.round(oh / 12)));
-                    for (let by = oy + brickH; by < oy + oh - 2; by += brickH) {
-                      ctx.beginPath(); ctx.moveTo(ox + 2, by); ctx.lineTo(ox + ow - 2, by); ctx.stroke();
+                    for (let by = brickH; by < oh - 2; by += brickH) {
+                      ctx.beginPath(); ctx.moveTo(2, by); ctx.lineTo(ow - 2, by); ctx.stroke();
                     }
                     // 세로 분할선 (홀짝 행 엇갈림)
                     const brickW = Math.max(16, ow / Math.max(1, Math.round(ow / 18)));
                     let row = 0;
-                    for (let by = oy; by < oy + oh; by += brickH, row++) {
+                    for (let by = 0; by < oh; by += brickH, row++) {
                       const offset = (row % 2 === 0) ? 0 : brickW / 2;
-                      for (let bx = ox + offset + brickW; bx < ox + ow - 2; bx += brickW) {
-                        const lineY1 = Math.max(oy + 1, by);
-                        const lineY2 = Math.min(oy + oh - 1, by + brickH);
+                      for (let bx = offset + brickW; bx < ow - 2; bx += brickW) {
+                        const lineY1 = Math.max(1, by);
+                        const lineY2 = Math.min(oh - 1, by + brickH);
                         ctx.beginPath(); ctx.moveTo(bx, lineY1); ctx.lineTo(bx, lineY2); ctx.stroke();
                       }
                     }
                     // 하이라이트 (위쪽 밝은 선)
                     ctx.strokeStyle = 'rgba(255,200,150,0.18)';
                     ctx.lineWidth = 1;
-                    ctx.beginPath(); ctx.moveTo(ox + 3, oy + 1); ctx.lineTo(ox + ow - 3, oy + 1); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(3, 1); ctx.lineTo(ow - 3, 1); ctx.stroke();
                     ctx.restore();
                   }
 
@@ -1528,44 +1715,48 @@
                   }
 
                   else if (obstacle.type === 'magnet') {
-                    // ── 마그네틱 3단계: Lv1=중형 Lv2=대형 Lv3=초강력 ─────
-                    const MAGNET_VIS = {
-                      1: { radius: 85,  bodyR: 18, rings: 2,
-                           fill: '#1e3a8a', stroke: '#3b82f6', dotColor: '96,165,250', dotCount: 6 },
-                      2: { radius: 125, bodyR: 24, rings: 3,
-                           fill: '#1e1b4b', stroke: '#818cf8', dotColor: '165,180,252', dotCount: 8 },
-                      3: { radius: 170, bodyR: 30, rings: 4,
-                           fill: '#0c0a1a', stroke: '#c4b5fd', dotColor: '196,181,253', dotCount: 12 },
+                    // 프리셋 → 커스텀 파라미터 폴백
+                    const MAGNET_PRESETS = {
+                      1: { radius: 85,  bodyR: 18, rings: 2, fill: '#1e3a8a', stroke: '#3b82f6', dotColor: '96,165,250',  dotCount: 6 },
+                      2: { radius: 125, bodyR: 24, rings: 3, fill: '#1e1b4b', stroke: '#818cf8', dotColor: '165,180,252', dotCount: 8 },
+                      3: { radius: 170, bodyR: 30, rings: 4, fill: '#0c0a1a', stroke: '#c4b5fd', dotColor: '196,181,253', dotCount: 12 },
                     };
                     const lv  = obstacle.level || 1;
-                    const vis = MAGNET_VIS[lv];
+                    const pre = MAGNET_PRESETS[lv];
+                    const mRange   = obstacle.radius   ?? pre.radius;
+                    const mBodyR   = obstacle.bodyRadius ?? pre.bodyR;
+                    const mRings   = obstacle.rings    ?? pre.rings;
+                    const mFill    = obstacle.fill     ?? pre.fill;
+                    const mStroke  = obstacle.stroke   ?? pre.stroke;
+                    const mDotCol  = obstacle.dotColor ?? pre.dotColor;
+                    const mDotCnt  = obstacle.dotCount ?? pre.dotCount;
                     const mcx = obstacle.x + BOARD_OFFSET;
                     const mcy = obstacle.y + BOARD_OFFSET;
 
                     ctx.save();
 
-                    // 동심원 링 (레벨 수만큼)
+                    // 동심원 링
                     const ringRatios = [0.95, 0.70, 0.46, 0.25];
                     const ringAlphas = [0.12, 0.22, 0.34, 0.48];
-                    for (let ri = 0; ri < vis.rings; ri++) {
-                      ctx.strokeStyle = `rgba(${vis.dotColor},${ringAlphas[ri]})`;
-                      ctx.lineWidth = ri === vis.rings - 1 ? 1.5 : 1;
+                    for (let ri = 0; ri < mRings; ri++) {
+                      ctx.strokeStyle = `rgba(${mDotCol},${ringAlphas[ri]})`;
+                      ctx.lineWidth = ri === mRings - 1 ? 1.5 : 1;
                       ctx.setLineDash(ri === 0 ? [4, 7] : [5, 8]);
                       ctx.beginPath();
-                      ctx.arc(mcx, mcy, vis.radius * ringRatios[ri], 0, Math.PI * 2);
+                      ctx.arc(mcx, mcy, mRange * ringRatios[ri], 0, Math.PI * 2);
                       ctx.stroke();
                     }
                     ctx.setLineDash([]);
 
-                    // 인력 도트 — 바깥→중심으로 흘러들어오는 애니메이션
+                    // 인력 도트 애니메이션
                     const tp = (Date.now() * 0.0009) % 1;
-                    for (let i = 0; i < vis.dotCount; i++) {
-                      const baseAngle = (i / vis.dotCount) * Math.PI * 2;
-                      const progress  = (tp + i / vis.dotCount) % 1;
-                      const dotDist   = vis.radius * 0.90 * (1 - progress);
+                    for (let i = 0; i < mDotCnt; i++) {
+                      const baseAngle = (i / mDotCnt) * Math.PI * 2;
+                      const progress  = (tp + i / mDotCnt) % 1;
+                      const dotDist   = mRange * 0.90 * (1 - progress);
                       const dotAlpha  = 0.80 * (1 - progress * progress);
                       const dotSize   = 1.8 + lv * 0.6;
-                      ctx.fillStyle = `rgba(${vis.dotColor},${dotAlpha})`;
+                      ctx.fillStyle = `rgba(${mDotCol},${dotAlpha})`;
                       ctx.beginPath();
                       ctx.arc(
                         mcx + Math.cos(baseAngle) * dotDist,
@@ -1576,28 +1767,28 @@
                     }
 
                     // 자석 본체
-                    ctx.fillStyle = vis.fill;
-                    ctx.strokeStyle = vis.stroke;
+                    ctx.fillStyle = mFill;
+                    ctx.strokeStyle = mStroke;
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.arc(mcx, mcy, vis.bodyR, 0, Math.PI * 2);
+                    ctx.arc(mcx, mcy, mBodyR, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.stroke();
 
                     // N/S 극 표시
-                    const fs = Math.max(8, vis.bodyR * 0.60);
+                    const fs = Math.max(8, mBodyR * 0.60);
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.font = `bold ${fs}px Arial`;
                     ctx.fillStyle = '#bfdbfe';
-                    ctx.fillText('N', mcx, mcy - vis.bodyR * 0.30);
+                    ctx.fillText('N', mcx, mcy - mBodyR * 0.30);
                     ctx.fillStyle = '#fca5a5';
-                    ctx.fillText('S', mcx, mcy + vis.bodyR * 0.36);
+                    ctx.fillText('S', mcx, mcy + mBodyR * 0.36);
 
-                    // 레벨 배지 (우측 상단 원형)
-                    const bx = mcx + vis.bodyR * 0.72;
-                    const by = mcy - vis.bodyR * 0.72;
-                    ctx.fillStyle = vis.stroke;
+                    // 강도 배지
+                    const bx = mcx + mBodyR * 0.72;
+                    const by = mcy - mBodyR * 0.72;
+                    ctx.fillStyle = mStroke;
                     ctx.beginPath();
                     ctx.arc(bx, by, 7, 0, Math.PI * 2);
                     ctx.fill();
@@ -1611,6 +1802,86 @@
                   }
                 });
               }
+
+              // ── crunch 렌더링 (dynamicObstacles) ──────────────────────
+              const renderNow = Date.now();
+              const renderCrunches = (isDevMode && !isTestMode)
+                ? (devStage.obstacles || []).filter(o => o.type === 'crunch')
+                : dynamicObstacles.filter(o => o.type === 'crunch');
+              renderCrunches.forEach(obs => {
+                const cx = obs.x + BOARD_OFFSET;
+                const cy = obs.y + BOARD_OFFSET;
+                const cr = obs.radius || 22;
+                ctx.save();
+
+                if (!obs._fragment) {
+                  // 외곽 그림자
+                  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                  ctx.shadowBlur = 6;
+
+                  // 본체 원
+                  const grad = ctx.createRadialGradient(cx - cr * 0.3, cy - cr * 0.3, cr * 0.1, cx, cy, cr);
+                  grad.addColorStop(0, '#b0a090');
+                  grad.addColorStop(0.5, '#7a6a5a');
+                  grad.addColorStop(1, '#4a3a2a');
+                  ctx.fillStyle = grad;
+                  ctx.beginPath();
+                  ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.shadowBlur = 0;
+
+                  // 균열선 (4방향)
+                  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+                  ctx.lineWidth = 1.5;
+                  for (let i = 0; i < 4; i++) {
+                    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(cx + Math.cos(a) * cr * 0.85, cy + Math.sin(a) * cr * 0.85);
+                    ctx.stroke();
+                  }
+                  // 테두리
+                  ctx.strokeStyle = '#2a1a0a';
+                  ctx.lineWidth = 2;
+                  ctx.beginPath();
+                  ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+                  ctx.stroke();
+
+                  // X 아이콘 힌트
+                  ctx.fillStyle = 'rgba(255,220,180,0.8)';
+                  ctx.font = `bold ${Math.round(cr * 0.7)}px Arial`;
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+                  ctx.fillText('✕', cx, cy + 1);
+                  ctx.textAlign = 'left';
+                  ctx.textBaseline = 'alphabetic';
+
+                } else {
+                  // 조각 — 삼각형 형태, 페이드아웃
+                  const age = renderNow - obs._born;
+                  const life = Math.max(0, 1 - age / obs._ttl);
+                  ctx.globalAlpha = life;
+                  ctx.translate(cx, cy);
+                  ctx.rotate(obs._angle + age * 0.004);
+
+                  const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, cr);
+                  grad.addColorStop(0, '#c0a880');
+                  grad.addColorStop(1, '#5a3a1a');
+                  ctx.fillStyle = grad;
+                  ctx.strokeStyle = '#2a1a0a';
+                  ctx.lineWidth = 1;
+
+                  // 삼각형 조각
+                  ctx.beginPath();
+                  ctx.moveTo(0, -cr);
+                  ctx.lineTo(cr * 0.8, cr * 0.5);
+                  ctx.lineTo(-cr * 0.8, cr * 0.5);
+                  ctx.closePath();
+                  ctx.fill();
+                  ctx.stroke();
+                }
+                ctx.restore();
+              });
 
               // 스프링 그리기
               if (isDevMode && devStage.springs) {
@@ -1693,21 +1964,103 @@
 
 
 
-              // 파란 구슬에 선택 표시
-              if (isDevMode && selectedObject && selectedObject.type === 'shooter') {
-                const x = shooterMarble.x + BOARD_OFFSET;
-                const y = shooterMarble.y + BOARD_OFFSET;
-                const radius = physicsConfig.puckRadius;
+              // ── 편집 모드 선택 하이라이트 ────────────────────────────
+              if (isDevMode && !isTestMode && selectedObject) {
+                const t = Date.now() * 0.004;
+                const pulse = 0.5 + 0.5 * Math.sin(t); // 0~1 맥동
+                ctx.save();
 
-                ctx.strokeStyle = '#fbbf24';
-                ctx.lineWidth = 4;
-                ctx.setLineDash([8, 4]);
-                ctx.beginPath();
-                ctx.arc(x, y, radius + 8, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.setLineDash([]);
+                if (selectedObject.type === 'shooter') {
+                  const x = shooterMarble.x + BOARD_OFFSET;
+                  const y = shooterMarble.y + BOARD_OFFSET;
+                  const r = physicsConfig.puckRadius;
+                  ctx.strokeStyle = `rgba(251,191,36,${0.6 + pulse * 0.4})`;
+                  ctx.lineWidth = 3;
+                  ctx.setLineDash([6, 4]);
+                  ctx.beginPath();
+                  ctx.arc(x, y, r + 8 + pulse * 4, 0, Math.PI * 2);
+                  ctx.stroke();
+                  ctx.setLineDash([]);
+                  ctx.fillStyle = 'rgba(251,191,36,0.15)';
+                  ctx.beginPath();
+                  ctx.arc(x, y, r + 8 + pulse * 4, 0, Math.PI * 2);
+                  ctx.fill();
+                  // 라벨
+                  ctx.fillStyle = '#fbbf24';
+                  ctx.font = 'bold 11px Arial';
+                  ctx.textAlign = 'center';
+                  ctx.fillText('SHOOTER', x, y - r - 14);
+                  ctx.textAlign = 'left';
+                }
 
-                // 삭제 버튼은 파란 구슬에는 없음 (위치만 조정 가능)
+                if (selectedObject.type === 'marble' && devStage.marbles[selectedObject.index]) {
+                  const m = devStage.marbles[selectedObject.index];
+                  const x = m.x + BOARD_OFFSET;
+                  const y = m.y + BOARD_OFFSET;
+                  const r = physicsConfig.puckRadius;
+                  ctx.strokeStyle = `rgba(251,191,36,${0.6 + pulse * 0.4})`;
+                  ctx.lineWidth = 3;
+                  ctx.setLineDash([6, 4]);
+                  ctx.beginPath();
+                  ctx.arc(x, y, r + 8 + pulse * 4, 0, Math.PI * 2);
+                  ctx.stroke();
+                  ctx.setLineDash([]);
+                  ctx.fillStyle = 'rgba(251,191,36,0.15)';
+                  ctx.beginPath();
+                  ctx.arc(x, y, r + 8 + pulse * 4, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.fillStyle = '#fbbf24';
+                  ctx.font = 'bold 11px Arial';
+                  ctx.textAlign = 'center';
+                  ctx.fillText(`#${selectedObject.index + 1}`, x, y - r - 14);
+                  ctx.textAlign = 'left';
+                }
+
+                if (selectedObject.type === 'obstacle' && devStage.obstacles?.[selectedObject.index]) {
+                  const obs = devStage.obstacles[selectedObject.index];
+                  const ox = obs.x + BOARD_OFFSET;
+                  const oy = obs.y + BOARD_OFFSET;
+                  const pad = 10 + pulse * 4;
+                  const typeColors = { wall:'255,200,0', sinkhole:'200,100,255', magnet:'100,180,255', crunch:'255,160,50' };
+                  const col = typeColors[obs.type] || '251,191,36';
+                  ctx.strokeStyle = `rgba(${col},${0.7 + pulse * 0.3})`;
+                  ctx.lineWidth = 2.5;
+                  ctx.setLineDash([6, 4]);
+
+                  if (!obs.type || obs.type === 'wall') {
+                    const hlAngle = obs.angle || 0;
+                    const hlW = obs.width + pad * 2, hlH = obs.height + pad * 2;
+                    const hlCx = ox + obs.width / 2, hlCy = oy + obs.height / 2;
+                    ctx.save();
+                    ctx.translate(hlCx, hlCy);
+                    ctx.rotate(hlAngle);
+                    ctx.strokeRect(-hlW/2, -hlH/2, hlW, hlH);
+                    ctx.fillStyle = `rgba(${col},0.1)`;
+                    ctx.fillRect(-hlW/2, -hlH/2, hlW, hlH);
+                    ctx.restore();
+                  } else {
+                    const r = obs.radius || 28;
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, r + pad, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.fillStyle = `rgba(${col},0.1)`;
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, r + pad, 0, Math.PI * 2);
+                    ctx.fill();
+                  }
+                  ctx.setLineDash([]);
+
+                  // 오브젝트 타입 라벨
+                  const labels = { wall:'🧱 WALL', sinkhole:'🕳️ SINKHOLE', magnet:'🧲 MAGNET', crunch:'💥 CRUNCH' };
+                  ctx.fillStyle = `rgba(${col},1)`;
+                  ctx.font = 'bold 11px Arial';
+                  ctx.textAlign = 'center';
+                  const labelY = obs.type === 'wall' ? oy + obs.height/2 - (obs.height/2 + pad + 6) : oy - (obs.radius || 28) - pad - 6;
+                  ctx.fillText(labels[obs.type] || obs.type, ox + (obs.width||0)/2, labelY);
+                  ctx.textAlign = 'left';
+                }
+
+                ctx.restore();
               }
 
               ctx.restore();
@@ -2016,7 +2369,7 @@
                 cancelAnimationFrame(renderAnimationId);
               }
             };
-          }, [marbles, shooterMarble, gameState, aimEnd, fallingMarbles, shooterFalling, particles, currentStage]);
+          }, []); // RAF 루프는 한 번만 시작, 값은 renderStateRef에서 항상 최신 참조
 
           const getEventCoordinates = (e, canvas) => {
             const rect = canvas.getBoundingClientRect();
@@ -2030,7 +2383,7 @@
           };
 
           const handlePointerDown = (e) => {
-            if (gameState !== 'ready') return;
+            if (gameState !== 'ready' && !(isDevMode && !isTestMode)) return;
 
             const canvas = canvasRef.current;
             const { x, y } = getEventCoordinates(e, canvas);
@@ -2042,18 +2395,31 @@
               // 배치 모드: 툴박스에서 선택한 오브젝트 배치
               if (placementMode === 'place' && selectedTool) {
                 if (selectedTool === 'marble') {
-                  // 빨간 구슬 추가
                   const newMarbles = [...devStage.marbles, { x: boardX, y: boardY, vx: 0, vy: 0, mass: 1 }];
-                  setDevStage({ ...devStage, marbles: newMarbles });
+                  editorSetDevStage({ ...devStage, marbles: newMarbles });
                   return;
                 } else if (selectedTool === 'shooter') {
-                  // 파란 구슬(슈터) 위치 변경
-                  setDevStage({ ...devStage, shooter: { ...devStage.shooter, x: boardX, y: boardY } });
+                  editorSetDevStage({ ...devStage, shooter: { ...devStage.shooter, x: boardX, y: boardY } });
                   return;
                 } else if (selectedTool === 'spring') {
-                  // 스프링 추가
                   const newSprings = [...(devStage.springs || []), { x: boardX - 20, y: boardY - 20, size: 40, angle: 0, power: 20 }];
-                  setDevStage({ ...devStage, springs: newSprings });
+                  editorSetDevStage({ ...devStage, springs: newSprings });
+                  return;
+                } else if (selectedTool === 'wall') {
+                  const newObs = [...(devStage.obstacles || []), { type: 'wall', x: boardX - 40, y: boardY - 8, width: 80, height: 16, restitution: 0.7 }];
+                  editorSetDevStage({ ...devStage, obstacles: newObs });
+                  return;
+                } else if (selectedTool === 'sinkhole') {
+                  const newObs = [...(devStage.obstacles || []), { type: 'sinkhole', x: boardX, y: boardY, radius: 28, threshold: 0.85 }];
+                  editorSetDevStage({ ...devStage, obstacles: newObs });
+                  return;
+                } else if (selectedTool === 'magnet') {
+                  const newObs = [...(devStage.obstacles || []), { type: 'magnet', x: boardX, y: boardY, level: 1, radius: 85, strength: 0.48, bodyRadius: 18 }];
+                  editorSetDevStage({ ...devStage, obstacles: newObs });
+                  return;
+                } else if (selectedTool === 'crunch') {
+                  const newObs = [...(devStage.obstacles || []), { type: 'crunch', x: boardX, y: boardY, radius: 22, restitution: 0.25, fragCount: 4, fragSpeed: 2.5, fragTTL: 1200 }];
+                  editorSetDevStage({ ...devStage, obstacles: newObs });
                   return;
                 }
               }
@@ -2067,7 +2433,7 @@
                   if (boardX >= spring.x && boardX <= spring.x + springSize &&
                       boardY >= spring.y && boardY <= spring.y + springSize) {
                     const newSprings = devStage.springs.filter((_, idx) => idx !== i);
-                    setDevStage({ ...devStage, springs: newSprings });
+                    editorSetDevStage({ ...devStage, springs: newSprings });
                     return;
                   }
                 }
@@ -2080,7 +2446,30 @@
                   const marbleDistance = Math.sqrt(marbleDx * marbleDx + marbleDy * marbleDy);
                   if (marbleDistance < physicsConfig.puckRadius) {
                     const newMarbles = devStage.marbles.filter((_, idx) => idx !== i);
-                    setDevStage({ ...devStage, marbles: newMarbles });
+                    editorSetDevStage({ ...devStage, marbles: newMarbles });
+                    return;
+                  }
+                }
+
+                // 장애물 삭제 확인
+                const obstacles = devStage.obstacles || [];
+                for (let i = 0; i < obstacles.length; i++) {
+                  const obs = obstacles[i];
+                  let hit = false;
+                  if (!obs.type || obs.type === 'wall') {
+                    const wAngle = obs.angle || 0;
+                    const hw2 = (obs.width || 80) / 2, hh2 = (obs.height || 16) / 2;
+                    const wcx2 = obs.x + hw2, wcy2 = obs.y + hh2;
+                    const cosW = Math.cos(-wAngle), sinW = Math.sin(-wAngle);
+                    const lxW = cosW * (boardX - wcx2) - sinW * (boardY - wcy2);
+                    const lyW = sinW * (boardX - wcx2) + cosW * (boardY - wcy2);
+                    hit = Math.abs(lxW) <= hw2 && Math.abs(lyW) <= hh2;
+                  } else {
+                    const r = obs.radius || 28;
+                    hit = Math.sqrt((boardX - obs.x) ** 2 + (boardY - obs.y) ** 2) < r;
+                  }
+                  if (hit) {
+                    editorSetDevStage({ ...devStage, obstacles: obstacles.filter((_, idx) => idx !== i) });
                     return;
                   }
                 }
@@ -2098,7 +2487,7 @@
                 const deleteDistance = Math.sqrt(Math.pow(x - (springX + springSize/2), 2) + Math.pow(y - (springY - 15), 2));
                 if (deleteDistance < 12) {
                   const newSprings = devStage.springs.filter((_, i) => i !== selectedObject.index);
-                  setDevStage({ ...devStage, springs: newSprings });
+                  editorSetDevStage({ ...devStage, springs: newSprings });
                   setSelectedObject(null);
                   return;
                 }
@@ -2108,7 +2497,7 @@
                 if (leftDistance < 12) {
                   const newSprings = [...devStage.springs];
                   newSprings[selectedObject.index].angle = (spring.angle - Math.PI/4) % (Math.PI * 2);
-                  setDevStage({ ...devStage, springs: newSprings });
+                  editorSetDevStage({ ...devStage, springs: newSprings });
                   return;
                 }
 
@@ -2117,44 +2506,73 @@
                 if (rightDistance < 12) {
                   const newSprings = [...devStage.springs];
                   newSprings[selectedObject.index].angle = (spring.angle + Math.PI/4) % (Math.PI * 2);
-                  setDevStage({ ...devStage, springs: newSprings });
+                  editorSetDevStage({ ...devStage, springs: newSprings });
                   return;
                 }
               }
 
-              // 스프링 클릭 확인
+              // move/inspect 모드: 오브젝트 선택 (move=드래그 이동, inspect=속성만)
+              const canDrag = placementMode === 'move';
+
+              // 스프링 클릭
               for (let i = devStage.springs.length - 1; i >= 0; i--) {
                 const spring = devStage.springs[i];
                 const springSize = spring.size || 40;
                 if (boardX >= spring.x && boardX <= spring.x + springSize &&
                     boardY >= spring.y && boardY <= spring.y + springSize) {
+                  if (canDrag) { setEditorHistory(h=>[...h.slice(-49),devStage]); setEditorFuture([]); }
                   setSelectedObject({ type: 'spring', index: i });
-                  setDraggingObject({ type: 'spring', index: i, offsetX: boardX - spring.x, offsetY: boardY - spring.y });
+                  if (canDrag) setDraggingObject({ type: 'spring', index: i, offsetX: boardX - spring.x, offsetY: boardY - spring.y });
                   return;
                 }
               }
 
-              // 빨간 구슬 클릭 확인
+              // 빨간 구슬 클릭
               for (let i = 0; i < devStage.marbles.length; i++) {
                 const marble = devStage.marbles[i];
                 const marbleDx = boardX - marble.x;
                 const marbleDy = boardY - marble.y;
-                const marbleDistance = Math.sqrt(marbleDx * marbleDx + marbleDy * marbleDy);
-                if (marbleDistance < physicsConfig.puckRadius * 2) {
+                if (Math.sqrt(marbleDx*marbleDx+marbleDy*marbleDy) < physicsConfig.puckRadius * 2) {
+                  if (canDrag) { setEditorHistory(h=>[...h.slice(-49),devStage]); setEditorFuture([]); }
                   setSelectedObject({ type: 'marble', index: i });
-                  setDraggingObject({ type: 'marble', index: i, offsetX: marbleDx, offsetY: marbleDy });
+                  if (canDrag) setDraggingObject({ type: 'marble', index: i, offsetX: marbleDx, offsetY: marbleDy });
                   return;
                 }
               }
 
-              // 파란 구슬 클릭 확인
+              // 파란 구슬 클릭
               const shooterDx = boardX - shooterMarble.x;
               const shooterDy = boardY - shooterMarble.y;
-              const shooterDistance = Math.sqrt(shooterDx * shooterDx + shooterDy * shooterDy);
-              if (shooterDistance < physicsConfig.puckRadius * 2) {
+              if (Math.sqrt(shooterDx*shooterDx+shooterDy*shooterDy) < physicsConfig.puckRadius * 2) {
+                if (canDrag) { setEditorHistory(h=>[...h.slice(-49),devStage]); setEditorFuture([]); }
                 setSelectedObject({ type: 'shooter' });
-                setDraggingObject({ type: 'shooter', offsetX: shooterDx, offsetY: shooterDy });
+                if (canDrag) setDraggingObject({ type: 'shooter', offsetX: shooterDx, offsetY: shooterDy });
                 return;
+              }
+
+              // 장애물 클릭
+              const obstacles = devStage.obstacles || [];
+              for (let i = obstacles.length - 1; i >= 0; i--) {
+                const obs = obstacles[i];
+                let hit = false;
+                if (!obs.type || obs.type === 'wall') {
+                  const sAngle = obs.angle || 0;
+                  const shw = (obs.width || 80) / 2, shh = (obs.height || 16) / 2;
+                  const scx = obs.x + shw, scy = obs.y + shh;
+                  const cosS = Math.cos(-sAngle), sinS = Math.sin(-sAngle);
+                  const lxS = cosS * (boardX - scx) - sinS * (boardY - scy);
+                  const lyS = sinS * (boardX - scx) + cosS * (boardY - scy);
+                  hit = Math.abs(lxS) <= shw && Math.abs(lyS) <= shh;
+                } else {
+                  const r = obs.radius || 28;
+                  hit = Math.sqrt((boardX - obs.x)**2 + (boardY - obs.y)**2) < r;
+                }
+                if (hit) {
+                  if (canDrag) { setEditorHistory(h=>[...h.slice(-49),devStage]); setEditorFuture([]); }
+                  setSelectedObject({ type: 'obstacle', index: i });
+                  if (canDrag) setDraggingObject({ type: 'obstacle', index: i, offsetX: boardX - obs.x, offsetY: boardY - obs.y });
+                  return;
+                }
               }
 
               // 빈 곳 클릭 시 선택 해제
@@ -2198,28 +2616,31 @@
                 newY = Math.max(0, Math.min(BOARD_SIZE - springSize, newY));
 
                 newSprings[draggingObject.index] = { ...spring, x: newX, y: newY };
-                setDevStage({ ...devStage, springs: newSprings });
+                editorSetDevStage({ ...devStage, springs: newSprings }, true);
               } else if (draggingObject.type === 'marble') {
-                // 빨간 구슬 드래그
                 const newMarbles = [...devStage.marbles];
                 let newX = boardX - draggingObject.offsetX;
                 let newY = boardY - draggingObject.offsetY;
                 const radius = physicsConfig.puckRadius;
                 newX = Math.max(radius, Math.min(BOARD_SIZE - radius, newX));
                 newY = Math.max(radius, Math.min(BOARD_SIZE - radius, newY));
-
                 newMarbles[draggingObject.index] = { ...newMarbles[draggingObject.index], x: newX, y: newY };
-                setDevStage({ ...devStage, marbles: newMarbles });
+                editorSetDevStage({ ...devStage, marbles: newMarbles }, true);
               } else if (draggingObject.type === 'shooter') {
-                // 파란 구슬 드래그
                 let newX = boardX - draggingObject.offsetX;
                 let newY = boardY - draggingObject.offsetY;
                 const radius = physicsConfig.puckRadius;
                 newX = Math.max(radius, Math.min(BOARD_SIZE - radius, newX));
                 newY = Math.max(radius, Math.min(BOARD_SIZE - radius, newY));
-
                 setShooterMarble({ ...shooterMarble, x: newX, y: newY });
-                setDevStage({ ...devStage, shooter: { ...devStage.shooter, x: newX, y: newY }});
+                editorSetDevStage({ ...devStage, shooter: { ...devStage.shooter, x: newX, y: newY }}, true);
+              } else if (draggingObject.type === 'obstacle') {
+                const newObstacles = [...(devStage.obstacles || [])];
+                const obs = newObstacles[draggingObject.index];
+                let newX = Math.max(0, Math.min(BOARD_SIZE, boardX - draggingObject.offsetX));
+                let newY = Math.max(0, Math.min(BOARD_SIZE, boardY - draggingObject.offsetY));
+                newObstacles[draggingObject.index] = { ...obs, x: newX, y: newY };
+                editorSetDevStage({ ...devStage, obstacles: newObstacles }, true);
               }
               return;
             }
@@ -2917,101 +3338,77 @@
 
                                                             {/* Left Toolbox */}
                                                             {isDevMode && showDevPanel && !isTestMode && (
-                                                              <div className="fixed top-0 left-0 h-full w-20 bg-stone-900 border-r-4 border-cyan-600 shadow-2xl overflow-y-auto z-50">
-                                                                <div className="p-2">
-                                                                  <h3 className="text-cyan-400 font-bold text-xs text-center mb-3 rotate-0">🧰 툴박스</h3>
+                                                              <div className="fixed top-0 left-0 h-full w-16 bg-stone-950 border-r-2 border-cyan-700 shadow-2xl z-50 flex flex-col">
 
-                                                                  {/* 툴 버튼들 */}
-                                                                  <div className="space-y-2">
-                                                                    {/* 선택 툴 */}
-                                                                    <button
-                                                                      onClick={() => {
-                                                                        setSelectedTool(null);
-                                                                        setPlacementMode('select');
-                                                                      }}
-                                                                      className={`w-full aspect-square rounded-lg font-bold text-2xl transition-all ${
-                                                                        placementMode === 'select'
-                                                                          ? 'bg-cyan-600 text-white shadow-lg'
-                                                                          : 'bg-stone-800 text-gray-400 hover:bg-stone-700'
-                                                                      }`}
-                                                                      title="선택/이동"
-                                                                    >
-                                                                      ⬆️
-                                                                    </button>
+                                                                {/* 상단: 오브젝트 배치 툴 */}
+                                                                <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
+                                                                  <div className="text-cyan-500 text-center text-xs font-bold py-1">배치</div>
 
-                                                                    {/* 빨간 구슬 추가 */}
-                                                                    <button
-                                                                      onClick={() => {
-                                                                        setSelectedTool('marble');
-                                                                        setPlacementMode('place');
-                                                                      }}
-                                                                      className={`w-full aspect-square rounded-lg font-bold text-2xl transition-all ${
-                                                                        selectedTool === 'marble'
-                                                                          ? 'bg-red-600 text-white shadow-lg'
-                                                                          : 'bg-stone-800 text-red-400 hover:bg-stone-700'
-                                                                      }`}
-                                                                      title="빨간 구슬"
-                                                                    >
-                                                                      🔴
-                                                                    </button>
+                                                                  {[
+                                                                    { tool:'marble',   icon:'🔴', label:'빨간구슬', bg:'bg-red-700' },
+                                                                    { tool:'shooter',  icon:'🔵', label:'파란구슬', bg:'bg-blue-700' },
+                                                                    { tool:'spring',   icon:'🟢', label:'스프링',   bg:'bg-green-700' },
+                                                                    { tool:'wall',     icon:'🧱', label:'벽',       bg:'bg-yellow-700' },
+                                                                    { tool:'sinkhole', icon:'🕳️', label:'씽크홀',  bg:'bg-purple-700' },
+                                                                    { tool:'magnet',   icon:'🧲', label:'마그네틱', bg:'bg-blue-800' },
+                                                                    { tool:'crunch',   icon:'💥', label:'크런치',   bg:'bg-amber-700' },
+                                                                  ].map(({tool, icon, label, bg}) => (
+                                                                    <button key={tool}
+                                                                      onClick={() => { setSelectedTool(tool); setPlacementMode('place'); setSelectedObject(null); }}
+                                                                      className={`w-full aspect-square rounded-lg text-xl transition-all ${placementMode==='place' && selectedTool===tool ? bg+' text-white shadow-lg ring-2 ring-white' : 'bg-stone-800 hover:bg-stone-700'}`}
+                                                                      title={label}
+                                                                    >{icon}</button>
+                                                                  ))}
+                                                                </div>
 
-                                                                    {/* 파란 구슬 (슈터) 이동 */}
-                                                                    <button
-                                                                      onClick={() => {
-                                                                        setSelectedTool('shooter');
-                                                                        setPlacementMode('place');
-                                                                      }}
-                                                                      className={`w-full aspect-square rounded-lg font-bold text-2xl transition-all ${
-                                                                        selectedTool === 'shooter'
-                                                                          ? 'bg-blue-600 text-white shadow-lg'
-                                                                          : 'bg-stone-800 text-blue-400 hover:bg-stone-700'
-                                                                      }`}
-                                                                      title="파란 구슬 (슈터)"
-                                                                    >
-                                                                      🔵
-                                                                    </button>
+                                                                {/* 구분선 */}
+                                                                <div className="border-t border-stone-700 mx-2" />
 
-                                                                    {/* 스프링 추가 */}
-                                                                    <button
-                                                                      onClick={() => {
-                                                                        setSelectedTool('spring');
-                                                                        setPlacementMode('place');
-                                                                      }}
-                                                                      className={`w-full aspect-square rounded-lg font-bold text-2xl transition-all ${
-                                                                        selectedTool === 'spring'
-                                                                          ? 'bg-green-600 text-white shadow-lg'
-                                                                          : 'bg-stone-800 text-green-400 hover:bg-stone-700'
-                                                                      }`}
-                                                                      title="스프링"
-                                                                    >
-                                                                      🟢
-                                                                    </button>
+                                                                {/* 하단: 모드 툴 + 액션 */}
+                                                                <div className="p-1.5 space-y-1">
 
-                                                                    {/* 삭제 툴 */}
-                                                                    <button
-                                                                      onClick={() => {
-                                                                        setSelectedTool(null);
-                                                                        setPlacementMode('delete');
-                                                                      }}
-                                                                      className={`w-full aspect-square rounded-lg font-bold text-2xl transition-all ${
-                                                                        placementMode === 'delete'
-                                                                          ? 'bg-red-700 text-white shadow-lg'
-                                                                          : 'bg-stone-800 text-red-300 hover:bg-stone-700'
-                                                                      }`}
-                                                                      title="삭제"
-                                                                    >
-                                                                      🗑️
-                                                                    </button>
-                                                                  </div>
+                                                                  {/* 손바닥 — 이동 모드 */}
+                                                                  <button
+                                                                    onClick={() => { setPlacementMode('move'); setSelectedTool(null); }}
+                                                                    className={`w-full aspect-square rounded-lg text-xl transition-all ${placementMode==='move' ? 'bg-cyan-600 text-white shadow-lg ring-2 ring-cyan-300' : 'bg-stone-800 hover:bg-stone-700 text-cyan-300'}`}
+                                                                    title="이동/선택 (손바닥)"
+                                                                  >🖐️</button>
 
-                                                                  {/* 현재 선택된 툴 표시 */}
-                                                                  <div className="mt-4 text-xs text-center text-gray-400">
-                                                                    {placementMode === 'select' && '선택'}
-                                                                    {placementMode === 'place' && selectedTool === 'marble' && '빨간\n구슬'}
-                                                                    {placementMode === 'place' && selectedTool === 'shooter' && '파란\n구슬'}
-                                                                    {placementMode === 'place' && selectedTool === 'spring' && '스프링'}
-                                                                    {placementMode === 'delete' && '삭제'}
-                                                                  </div>
+                                                                  {/* 검지 — 속성 검사 모드 */}
+                                                                  <button
+                                                                    onClick={() => { setPlacementMode('inspect'); setSelectedTool(null); }}
+                                                                    className={`w-full aspect-square rounded-lg text-xl transition-all ${placementMode==='inspect' ? 'bg-amber-600 text-white shadow-lg ring-2 ring-amber-300' : 'bg-stone-800 hover:bg-stone-700 text-amber-300'}`}
+                                                                    title="속성 편집 (검지)"
+                                                                  >☝️</button>
+
+                                                                  {/* 구분선 */}
+                                                                  <div className="border-t border-stone-700 my-0.5" />
+
+                                                                  {/* Undo */}
+                                                                  <button
+                                                                    onClick={editorUndo}
+                                                                    disabled={editorHistory.length === 0}
+                                                                    className={`w-full aspect-square rounded-lg text-xl transition-all ${editorHistory.length > 0 ? 'bg-stone-700 hover:bg-stone-600 text-white' : 'bg-stone-900 text-stone-600 cursor-not-allowed'}`}
+                                                                    title={`되돌리기 (${editorHistory.length}단계)`}
+                                                                  >↩️</button>
+
+                                                                  {/* Redo */}
+                                                                  <button
+                                                                    onClick={editorRedo}
+                                                                    disabled={editorFuture.length === 0}
+                                                                    className={`w-full aspect-square rounded-lg text-xl transition-all ${editorFuture.length > 0 ? 'bg-stone-700 hover:bg-stone-600 text-white' : 'bg-stone-900 text-stone-600 cursor-not-allowed'}`}
+                                                                    title={`다시 실행 (${editorFuture.length}단계)`}
+                                                                  >↪️</button>
+
+                                                                  {/* 휴지통 — 지우개 모드 토글 */}
+                                                                  <button
+                                                                    onClick={() => {
+                                                                      setPlacementMode(m => m === 'delete' ? 'move' : 'delete');
+                                                                      setSelectedObject(null);
+                                                                    }}
+                                                                    className={`w-full aspect-square rounded-lg text-xl transition-all ${placementMode === 'delete' ? 'bg-red-700 hover:bg-red-600 text-white ring-2 ring-red-400 animate-pulse' : 'bg-stone-700 hover:bg-stone-600 text-white'}`}
+                                                                    title="지우개 모드 (클릭한 오브젝트 삭제)"
+                                                                  >🗑️</button>
                                                                 </div>
                                                               </div>
                                                             )}
@@ -3177,498 +3574,118 @@
                                                                     )}
                                                                   </div>
 
-                                                                  {/* 오브젝트 배치 토글 섹션 */}
-                                                                  <div className="mb-3">
-                                                                    <button
-                                                                      onClick={() => setDevPanelSections({...devPanelSections, objects: !devPanelSections.objects})}
-                                                                      className="w-full flex justify-between items-center p-3 bg-stone-800 hover:bg-stone-700 rounded-lg border border-blue-600 transition-colors"
-                                                                    >
-                                                                      <span className="text-blue-400 font-bold">📦 오브젝트 배치</span>
-                                                                      <span className="text-blue-400">{devPanelSections.objects ? '▼' : '▶'}</span>
-                                                                    </button>
-                                                                    {devPanelSections.objects && (
-                                                                      <div className="mt-3 p-3 bg-stone-800 bg-opacity-50 rounded-lg border border-stone-700">
-                                                                        {/* 현재 스테이지 요약 */}
-                                                                        <div className="mb-3 p-2 bg-stone-900 rounded border border-cyan-800">
-                                                                          <div className="text-cyan-300 text-xs font-bold mb-1">📊 스테이지 요약</div>
-                                                                          <div className="text-slate-300 text-xs space-y-1">
-                                                                            <div>🔴 빨간 구슬: {devStage.marbles.length}개</div>
-                                                                            <div>🔵 파란 구슬: 1개</div>
-                                                                            <div>🟢 스프링: {(devStage.springs || []).length}개</div>
-                                                                          </div>
-                                                                        </div>
-
-                                                                        {/* 선택된 오브젝트 속성 */}
-                                                                        {selectedObject && (
-                                                                          <div className="mb-3 p-3 bg-amber-900 bg-opacity-30 rounded border border-amber-600">
-                                                                            <div className="text-amber-300 text-sm font-bold mb-2">✏️ 선택된 오브젝트</div>
-
-                                                                            {selectedObject.type === 'marble' && devStage.marbles[selectedObject.index] && (
-                                                                              <div className="space-y-2">
-                                                                                <div className="text-slate-300 text-xs">
-                                                                                  <div className="font-bold mb-1">🔴 빨간 구슬 #{selectedObject.index + 1}</div>
-                                                                                  <div>위치: ({Math.round(devStage.marbles[selectedObject.index].x)}, {Math.round(devStage.marbles[selectedObject.index].y)})</div>
-
-                                                                                  <div className="mt-2">
-                                                                                    <label className="block mb-1">질량:</label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={devStage.marbles[selectedObject.index].mass || 1}
-                                                                                      onChange={(e) => {
-                                                                                        const newMarbles = [...devStage.marbles];
-                                                                                        newMarbles[selectedObject.index].mass = parseFloat(e.target.value) || 1;
-                                                                                        setDevStage({ ...devStage, marbles: newMarbles });
-                                                                                      }}
-                                                                                      className="w-full bg-stone-700 text-white px-2 py-1 rounded text-xs"
-                                                                                      step="0.1"
-                                                                                      min="0.1"
-                                                                                    />
-                                                                                  </div>
-
-                                                                                  <button
-                                                                                    onClick={() => {
-                                                                                      const newMarbles = devStage.marbles.filter((_, i) => i !== selectedObject.index);
-                                                                                      setDevStage({ ...devStage, marbles: newMarbles });
-                                                                                      setSelectedObject(null);
-                                                                                    }}
-                                                                                    className="w-full mt-2 p-2 bg-red-600 hover:bg-red-700 rounded text-white text-xs"
-                                                                                  >
-                                                                                    🗑️ 삭제
-                                                                                  </button>
-                                                                                </div>
-                                                                              </div>
-                                                                            )}
-
-                                                                            {selectedObject.type === 'shooter' && (
-                                                                              <div className="space-y-2">
-                                                                                <div className="text-slate-300 text-xs">
-                                                                                  <div className="font-bold mb-1">🔵 파란 구슬 (슈터)</div>
-                                                                                  <div>위치: ({Math.round(devStage.shooter.x)}, {Math.round(devStage.shooter.y)})</div>
-                                                                                  <div className="mt-2">
-                                                                                    <label className="block mb-1">질량:</label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={devStage.shooter.mass}
-                                                                                      onChange={(e) => setDevStage({
-                                                                                        ...devStage,
-                                                                                        shooter: { ...devStage.shooter, mass: parseFloat(e.target.value) || 1 }
-                                                                                      })}
-                                                                                      className="w-full bg-stone-700 text-white px-2 py-1 rounded text-xs"
-                                                                                      step="0.1"
-                                                                                      min="0.1"
-                                                                                    />
-                                                                                  </div>
-                                                                                </div>
-                                                                              </div>
-                                                                            )}
-
-                                                                            {selectedObject.type === 'spring' && devStage.springs[selectedObject.index] && (
-                                                                              <div className="space-y-2">
-                                                                                <div className="text-slate-300 text-xs">
-                                                                                  <div className="font-bold mb-1">🟢 스프링 #{selectedObject.index + 1}</div>
-                                                                                  <div>위치: ({Math.round(devStage.springs[selectedObject.index].x)}, {Math.round(devStage.springs[selectedObject.index].y)})</div>
-
-                                                                                  <div className="mt-2">
-                                                                                    <label className="block mb-1">방향 (도):</label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={Math.round(devStage.springs[selectedObject.index].angle * 180 / Math.PI)}
-                                                                                      onChange={(e) => {
-                                                                                        const newSprings = [...devStage.springs];
-                                                                                        newSprings[selectedObject.index].angle = parseFloat(e.target.value) * Math.PI / 180;
-                                                                                        setDevStage({ ...devStage, springs: newSprings });
-                                                                                      }}
-                                                                                      className="w-full bg-stone-700 text-white px-2 py-1 rounded text-xs"
-                                                                                      step="45"
-                                                                                    />
-                                                                                  </div>
-
-                                                                                  <div className="mt-2">
-                                                                                    <label className="block mb-1">파워:</label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={devStage.springs[selectedObject.index].power}
-                                                                                      onChange={(e) => {
-                                                                                        const newSprings = [...devStage.springs];
-                                                                                        newSprings[selectedObject.index].power = parseFloat(e.target.value);
-                                                                                        setDevStage({ ...devStage, springs: newSprings });
-                                                                                      }}
-                                                                                      className="w-full bg-stone-700 text-white px-2 py-1 rounded text-xs"
-                                                                                      step="5"
-                                                                                    />
-                                                                                  </div>
-
-                                                                                  <div className="mt-2">
-                                                                                    <label className="block mb-1">크기:</label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={devStage.springs[selectedObject.index].size || 40}
-                                                                                      onChange={(e) => {
-                                                                                        const newSprings = [...devStage.springs];
-                                                                                        newSprings[selectedObject.index].size = parseFloat(e.target.value);
-                                                                                        setDevStage({ ...devStage, springs: newSprings });
-                                                                                      }}
-                                                                                      className="w-full bg-stone-700 text-white px-2 py-1 rounded text-xs"
-                                                                                      step="5"
-                                                                                      min="20"
-                                                                                      max="80"
-                                                                                    />
-                                                                                  </div>
-
-                                                                                  <button
-                                                                                    onClick={() => {
-                                                                                      const newSprings = devStage.springs.filter((_, i) => i !== selectedObject.index);
-                                                                                      setDevStage({ ...devStage, springs: newSprings });
-                                                                                      setSelectedObject(null);
-                                                                                    }}
-                                                                                    className="w-full mt-2 p-2 bg-red-600 hover:bg-red-700 rounded text-white text-xs"
-                                                                                  >
-                                                                                    🗑️ 삭제
-                                                                                  </button>
-                                                                                </div>
-                                                                              </div>
-                                                                            )}
-
-                                                                            <button
-                                                                              onClick={() => setSelectedObject(null)}
-                                                                              className="w-full mt-2 p-1 bg-stone-700 hover:bg-stone-600 rounded text-slate-300 text-xs"
-                                                                            >
-                                                                              선택 해제
-                                                                            </button>
+                                                                  {/* ── 선택된 오브젝트 속성 패널 ────────────────── */}
+                                                                  {selectedObject && !isTestMode && (
+                                                                    <div className="mt-4 border border-amber-500 rounded-lg overflow-hidden">
+                                                                      <div className="flex items-center justify-between px-3 py-2 bg-amber-900 bg-opacity-60">
+                                                                        <span className="text-amber-300 font-bold text-sm">
+                                                                          {{ marble:"🔴 빨간 구슬", shooter:"🔵 파란 구슬", obstacle:"🔧 장애물", spring:"🟢 스프링" }[selectedObject.type]}
+                                                                          {selectedObject.type === "obstacle" && devStage.obstacles?.[selectedObject.index] && " — " + devStage.obstacles[selectedObject.index].type?.toUpperCase()}
+                                                                        </span>
+                                                                        <button onClick={() => setSelectedObject(null)} className="text-amber-400 hover:text-white text-lg leading-none">✕</button>
+                                                                      </div>
+                                                                      <div className="p-3 bg-stone-900 bg-opacity-70 space-y-2 max-h-80 overflow-y-auto text-xs text-slate-200">
+                                                                  
+                                                                        {selectedObject.type === "marble" && devStage.marbles[selectedObject.index] && (() => {
+                                                                          const m = devStage.marbles[selectedObject.index];
+                                                                          const upd = (patch) => { const a=[...devStage.marbles]; a[selectedObject.index]={...m,...patch}; setDevStage({...devStage,marbles:a}); };
+                                                                          return (<div className="space-y-2">
+                                                                            <div className="text-slate-400 mb-1">위치 ({Math.round(m.x)}, {Math.round(m.y)})</div>
+                                                                            <div><div className="flex justify-between mb-1"><span>질량</span><span className="text-amber-300 font-mono">{(m.mass??1).toFixed(2)}</span></div>
+                                                                            <input type="range" min={0.1} max={10} step={0.1} value={m.mass??1} onChange={e=>upd({mass:parseFloat(e.target.value)})} className="w-full accent-amber-400" /></div>
+                                                                            <button onClick={()=>{setDevStage({...devStage,marbles:devStage.marbles.filter((_,idx)=>idx!==selectedObject.index)});setSelectedObject(null);}} className="w-full mt-1 py-1 bg-red-700 hover:bg-red-600 rounded text-white">🗑️ 삭제</button>
+                                                                          </div>);
+                                                                        })()}
+                                                                  
+                                                                        {selectedObject.type === "shooter" && (
+                                                                          <div className="space-y-2">
+                                                                            <div className="text-slate-400 mb-1">위치 ({Math.round(devStage.shooter.x)}, {Math.round(devStage.shooter.y)})</div>
+                                                                            <div><div className="flex justify-between mb-1"><span>질량</span><span className="text-amber-300 font-mono">{(devStage.shooter.mass??1).toFixed(2)}</span></div>
+                                                                            <input type="range" min={0.1} max={10} step={0.1} value={devStage.shooter.mass??1} onChange={e=>setDevStage({...devStage,shooter:{...devStage.shooter,mass:parseFloat(e.target.value)}})} className="w-full accent-amber-400" /></div>
                                                                           </div>
                                                                         )}
-
-                                                                        <div className="text-slate-400 text-sm mb-2">빠른 추가:</div>
-                                                                        <div className="grid grid-cols-2 gap-2 mb-3">
-                                                                          <button
-                                                                            onClick={() => {
-                                                                              const newMarbles = [...devStage.marbles, { x: 250, y: 100, vx: 0, vy: 0, mass: 1 }];
-                                                                              setDevStage({ ...devStage, marbles: newMarbles });
-                                                                            }}
-                                                                            className="p-2 bg-red-600 hover:bg-red-500 rounded text-white text-xs"
-                                                                          >
-                                                                            🔴 빨간 구슬
-                                                                          </button>
-                                                                          <button
-                                                                            onClick={() => {
-                                                                              let newX = 230;
-                                                                              let newY = 30;
-                                                                              const springSize = 40;
-                                                                              let foundValidPosition = false;
-                                                                              for (let attempt = 0; attempt < 20 && !foundValidPosition; attempt++) {
-                                                                                foundValidPosition = true;
-                                                                                for (const spring of (devStage.springs || [])) {
-                                                                                  const existingSize = spring.size || 40;
-                                                                                  if (Math.abs(newX - spring.x) < springSize + 10 && Math.abs(newY - spring.y) < springSize + 10) {
-                                                                                    newX += 50;
-                                                                                    if (newX > 450) { newX = 30; newY += 50; }
-                                                                                    foundValidPosition = false;
-                                                                                    break;
-                                                                                  }
-                                                                                }
-                                                                              }
-                                                                              setDevStage({
-                                                                                ...devStage,
-                                                                                springs: [...(devStage.springs || []), { x: newX, y: newY, size: springSize, angle: 0, power: 20 }]
-                                                                              });
-                                                                            }}
-                                                                            className="p-2 bg-green-600 hover:bg-green-500 rounded text-white text-xs"
-                                                                          >
-                                                                            🟢 스프링
-                                                                          </button>
-                                                                        </div>
-
-                                                                        {/* 스프링 리스트 */}
-                                                                        {devStage.springs && devStage.springs.length > 0 && (
-                                                                          <div className="mt-3 border-t border-stone-700 pt-3">
-                                                                            <div className="text-slate-300 text-sm font-bold mb-2">스프링 목록:</div>
-                                                                            {devStage.springs.map((spring, index) => (
-                                                                              <div key={index} className="mb-3 p-2 bg-stone-900 rounded">
-                                                                                <div className="flex justify-between items-center mb-2">
-                                                                                  <span className="text-slate-300 text-xs">스프링 #{index + 1}</span>
-                                                                                  <button
-                                                                                    onClick={() => {
-                                                                                      setDevStage({
-                                                                                        ...devStage,
-                                                                                        springs: devStage.springs.filter((_, i) => i !== index)
-                                                                                      });
-                                                                                    }}
-                                                                                    className="text-red-400 hover:text-red-300 text-xs"
-                                                                                  >
-                                                                                    삭제
-                                                                                  </button>
-                                                                                </div>
-                                                                                <div className="text-xs space-y-1">
-                                                                                  <div>
-                                                                                    <label className="text-slate-400">방향 (도): </label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={(spring.angle * 180 / Math.PI).toFixed(0)}
-                                                                                      onChange={(e) => {
-                                                                                        const newSprings = [...devStage.springs];
-                                                                                        newSprings[index].angle = parseFloat(e.target.value) * Math.PI / 180;
-                                                                                        setDevStage({ ...devStage, springs: newSprings });
-                                                                                      }}
-                                                                                      className="w-16 bg-stone-700 text-white px-1 rounded"
-                                                                                    />
-                                                                                  </div>
-                                                                                  <div>
-                                                                                    <label className="text-slate-400">파워: </label>
-                                                                                    <input
-                                                                                      type="number"
-                                                                                      value={spring.power}
-                                                                                      onChange={(e) => {
-                                                                                        const newSprings = [...devStage.springs];
-                                                                                        newSprings[index].power = parseFloat(e.target.value);
-                                                                                        setDevStage({ ...devStage, springs: newSprings });
-                                                                                      }}
-                                                                                      className="w-16 bg-stone-700 text-white px-1 rounded"
-                                                                                    />
-                                                                                  </div>
-                                                                                </div>
+                                                                  
+                                                                        {selectedObject.type === "spring" && devStage.springs[selectedObject.index] && (() => {
+                                                                          const sp = devStage.springs[selectedObject.index];
+                                                                          const upd = (patch) => { const a=[...devStage.springs]; a[selectedObject.index]={...sp,...patch}; setDevStage({...devStage,springs:a}); };
+                                                                          return (<div className="space-y-2">
+                                                                            <div className="text-slate-400 mb-1">위치 ({Math.round(sp.x)}, {Math.round(sp.y)})</div>
+                                                                            <div><div className="flex justify-between mb-1"><span>파워</span><span className="text-amber-300 font-mono">{sp.power??20}</span></div>
+                                                                            <input type="range" min={1} max={40} step={1} value={sp.power??20} onChange={e=>upd({power:parseFloat(e.target.value)})} className="w-full accent-amber-400" /></div>
+                                                                            <div><div className="flex justify-between mb-1"><span>크기</span><span className="text-amber-300 font-mono">{sp.size??40}</span></div>
+                                                                            <input type="range" min={20} max={80} step={5} value={sp.size??40} onChange={e=>upd({size:parseFloat(e.target.value)})} className="w-full accent-amber-400" /></div>
+                                                                            <div><div className="flex justify-between mb-1"><span>방향(도)</span><span className="text-amber-300 font-mono">{Math.round((sp.angle||0)*180/Math.PI)}°</span></div>
+                                                                            <input type="range" min={0} max={360} step={5} value={Math.round((sp.angle||0)*180/Math.PI)} onChange={e=>upd({angle:parseFloat(e.target.value)*Math.PI/180})} className="w-full accent-amber-400" /></div>
+                                                                            <button onClick={()=>{setDevStage({...devStage,springs:devStage.springs.filter((_,idx)=>idx!==selectedObject.index)});setSelectedObject(null);}} className="w-full mt-1 py-1 bg-red-700 hover:bg-red-600 rounded text-white">🗑️ 삭제</button>
+                                                                          </div>);
+                                                                        })()}
+                                                                  
+                                                                        {selectedObject.type === "obstacle" && devStage.obstacles?.[selectedObject.index] && (() => {
+                                                                          const obs = devStage.obstacles[selectedObject.index];
+                                                                          const upd = (patch) => { const a=[...devStage.obstacles]; a[selectedObject.index]={...obs,...patch}; setDevStage({...devStage,obstacles:a}); };
+                                                                          const Sl = ({k,label,mn,mx,st,val}) => (<div>
+                                                                            <div className="flex justify-between mb-1"><span>{label}</span><span className="text-amber-300 font-mono">{st<1?parseFloat(val).toFixed(2):Math.round(val)}</span></div>
+                                                                            <input type="range" min={mn} max={mx} step={st} value={val} onChange={e=>upd({[k]:parseFloat(e.target.value)})} className="w-full accent-amber-400" />
+                                                                          </div>);
+                                                                          return (<div className="space-y-2">
+                                                                            <div className="text-slate-400 mb-1">위치 ({Math.round(obs.x)}, {Math.round(obs.y)})</div>
+                                                                            <Sl k="x" label="X 위치" mn={0} mx={500} st={1} val={obs.x||0} />
+                                                                            <Sl k="y" label="Y 위치" mn={0} mx={500} st={1} val={obs.y||0} />
+                                                                            {obs.type==="wall" && <>
+                                                                              <Sl k="width"       label="너비"         mn={10}  mx={400} st={2}    val={obs.width||80} />
+                                                                              <Sl k="height"      label="높이"         mn={4}   mx={100} st={2}    val={obs.height||16} />
+                                                                              <Sl k="restitution" label="반발력"        mn={0}   mx={1}   st={0.05} val={obs.restitution??0.7} />
+                                                                              <div>
+                                                                                <div className="flex justify-between mb-1"><span>회전(도)</span><span className="text-amber-300 font-mono">{Math.round((obs.angle||0)*180/Math.PI)}°</span></div>
+                                                                                <input type="range" min={-180} max={180} step={5} value={Math.round((obs.angle||0)*180/Math.PI)} onChange={e=>upd({angle:parseFloat(e.target.value)*Math.PI/180})} className="w-full accent-amber-400" />
                                                                               </div>
-                                                                            ))}
-                                                                          </div>
-                                                                        )}
-
-                                                                        <div className="text-slate-500 text-xs mt-2">※ 더 많은 오브젝트 개발 예정</div>
+                                                                            </>}
+                                                                            {obs.type==="sinkhole" && <>
+                                                                              <Sl k="radius"    label="반경"      mn={10}  mx={120} st={2}    val={obs.radius||28} />
+                                                                              <Sl k="threshold" label="흡입 비율"  mn={0.1} mx={1}   st={0.05} val={obs.threshold??0.85} />
+                                                                            </>}
+                                                                            {obs.type==="magnet" && <>
+                                                                              <Sl k="radius"     label="인력 범위"  mn={20}  mx={250} st={5}    val={obs.radius||85} />
+                                                                              <Sl k="strength"   label="자력 세기"  mn={0.1} mx={2}   st={0.05} val={obs.strength??0.48} />
+                                                                              <Sl k="bodyRadius" label="본체 크기"  mn={8}   mx={50}  st={1}    val={obs.bodyRadius||18} />
+                                                                            </>}
+                                                                            {obs.type==="crunch" && <>
+                                                                              <Sl k="radius"     label="반경"          mn={8}   mx={80}   st={2}   val={obs.radius||22} />
+                                                                              <Sl k="restitution" label="반동"         mn={0}   mx={1}    st={0.05} val={obs.restitution??0.25} />
+                                                                              <Sl k="fragCount"  label="조각 수"       mn={2}   mx={8}    st={1}   val={obs.fragCount??4} />
+                                                                              <Sl k="fragSpeed"  label="조각 속도"     mn={0.5} mx={10}   st={0.5} val={obs.fragSpeed??2.5} />
+                                                                              <Sl k="fragTTL"   label="소멸 시간(ms)"  mn={200} mx={3000} st={100} val={obs.fragTTL??1200} />
+                                                                            </>}
+                                                                            <button onClick={()=>{setDevStage({...devStage,obstacles:devStage.obstacles.filter((_,idx)=>idx!==selectedObject.index)});setSelectedObject(null);}} className="w-full mt-1 py-1 bg-red-700 hover:bg-red-600 rounded text-white">🗑️ 삭제</button>
+                                                                          </div>);
+                                                                        })()}
+                                                                  
                                                                       </div>
-                                                                    )}
-                                                                  </div>
-
-                                                                  {/* 스테이지 설정 토글 섹션 */}
-                                                                  <div className="mb-3">
-                                                                    <button
-                                                                      onClick={() => setDevPanelSections({...devPanelSections, stage: !devPanelSections.stage})}
-                                                                      className="w-full flex justify-between items-center p-3 bg-stone-800 hover:bg-stone-700 rounded-lg border border-green-600 transition-colors"
-                                                                    >
-                                                                      <span className="text-green-400 font-bold">🎯 스테이지 설정</span>
-                                                                      <span className="text-green-400">{devPanelSections.stage ? '▼' : '▶'}</span>
-                                                                    </button>
-                                                                    {devPanelSections.stage && (
-                                                                      <div className="mt-3 p-3 bg-stone-800 bg-opacity-50 rounded-lg border border-stone-700">
-                                                                        <div className="mb-2">
-                                                                          <label className="text-slate-300 text-sm block mb-1">스테이지 이름:</label>
-                                                                          <input
-                                                                            type="text"
-                                                                            placeholder="Custom Stage"
-                                                                            className="w-full p-2 bg-stone-700 text-white rounded border border-stone-600 text-sm"
-                                                                          />
-                                                                        </div>
-                                                                        <div className="mb-2">
-                                                                          <label className="text-slate-300 text-sm block mb-1">난이도:</label>
-                                                                          <select className="w-full p-2 bg-stone-700 text-white rounded border border-stone-600 text-sm">
-                                                                            <option>쉬움</option>
-                                                                            <option>보통</option>
-                                                                            <option>어려움</option>
-                                                                          </select>
-                                                                        </div>
-                                                                        <div className="text-slate-500 text-xs mt-2">※ 개발 예정</div>
+                                                                    </div>
+                                                                  )}
+                                                                  
+                                                                  {/* ── 스테이지 요약 ────────────────────────────── */}
+                                                                  {!selectedObject && (
+                                                                    <div className="mt-4 p-3 bg-stone-800 rounded-lg border border-stone-600">
+                                                                      <div className="text-slate-300 text-xs font-bold mb-2">📊 스테이지 현황</div>
+                                                                      <div className="text-slate-400 text-xs space-y-1">
+                                                                        <div>🔴 빨간 구슬 {devStage.marbles.length}개</div>
+                                                                        <div>🔵 파란 구슬 1개</div>
+                                                                        <div>🟢 스프링 {(devStage.springs||[]).length}개</div>
+                                                                        <div>🧱 벽 {(devStage.obstacles||[]).filter(o=>o.type==="wall").length}개</div>
+                                                                        <div>🕳️ 씽크홀 {(devStage.obstacles||[]).filter(o=>o.type==="sinkhole").length}개</div>
+                                                                        <div>🧲 마그네틱 {(devStage.obstacles||[]).filter(o=>o.type==="magnet").length}개</div>
+                                                                        <div>💥 크런치 {(devStage.obstacles||[]).filter(o=>o.type==="crunch").length}개</div>
                                                                       </div>
-                                                                    )}
-                                                                  </div>
-
-                                                                  {/* 저장/불러오기 토글 섹션 */}
-                                                                  <div className="mb-3">
-                                                                    <button
-                                                                      onClick={() => setDevPanelSections({...devPanelSections, save: !devPanelSections.save})}
-                                                                      className="w-full flex justify-between items-center p-3 bg-stone-800 hover:bg-stone-700 rounded-lg border border-yellow-600 transition-colors"
-                                                                    >
-                                                                      <span className="text-yellow-400 font-bold">💾 저장/불러오기</span>
-                                                                      <span className="text-yellow-400">{devPanelSections.save ? '▼' : '▶'}</span>
-                                                                    </button>
-                                                                    {devPanelSections.save && (
-                                                                      <div className="mt-3 p-3 bg-stone-800 bg-opacity-50 rounded-lg border border-stone-700">
-                                                                        {/* 내 스테이지에 저장 */}
-                                                                        <button
-                                                                          onClick={() => {
-                                                                            const stageName = prompt('스테이지 이름을 입력하세요:', `나의 스테이지 ${userStages.length + 1}`);
-                                                                            if (stageName) {
-                                                                              const stageData = {
-                                                                                id: Date.now(),
-                                                                                name: stageName,
-                                                                                version: "1.0",
-                                                                                stage: devStage,
-                                                                                physics: physicsConfig,
-                                                                                timestamp: new Date().toISOString()
-                                                                              };
-                                                                              const newUserStages = [...userStages, stageData];
-                                                                              setUserStages(newUserStages);
-                                                                              localStorage.setItem('userCustomStages', JSON.stringify(newUserStages));
-                                                                              alert(`"${stageName}" 스테이지가 저장되었습니다! (총 ${newUserStages.length}개)`);
-                                                                            }
-                                                                          }}
-                                                                          className="w-full p-3 bg-cyan-600 hover:bg-cyan-700 rounded text-white text-sm mb-3 font-bold border-2 border-cyan-400"
-                                                                        >
-                                                                          💾 내 스테이지에 저장
-                                                                        </button>
-
-                                                                        <div className="text-slate-400 text-xs mb-2 text-center">── 또는 파일로 저장 ──</div>
-
-                                                                        {/* JSON으로 다운로드 */}
-                                                                        <button
-                                                                          onClick={() => {
-                                                                            const stageData = {
-                                                                              version: "1.0",
-                                                                              stage: devStage,
-                                                                              physics: physicsConfig,
-                                                                              timestamp: new Date().toISOString()
-                                                                            };
-                                                                            const jsonStr = JSON.stringify(stageData, null, 2);
-                                                                            const blob = new Blob([jsonStr], { type: 'application/json' });
-                                                                            const url = URL.createObjectURL(blob);
-                                                                            const a = document.createElement('a');
-                                                                            a.href = url;
-                                                                            a.download = `stage_${Date.now()}.json`;
-                                                                            a.click();
-                                                                            URL.revokeObjectURL(url);
-                                                                          }}
-                                                                          className="w-full p-2 bg-green-600 hover:bg-green-700 rounded text-white text-sm mb-2"
-                                                                        >
-                                                                          📥 JSON으로 다운로드
-                                                                        </button>
-
-                                                                        {/* JSON 파일 불러오기 */}
-                                                                        <label className="w-full block">
-                                                                          <input
-                                                                            type="file"
-                                                                            accept=".json"
-                                                                            onChange={(e) => {
-                                                                              const file = e.target.files[0];
-                                                                              if (file) {
-                                                                                const reader = new FileReader();
-                                                                                reader.onload = (event) => {
-                                                                                  try {
-                                                                                    const data = JSON.parse(event.target.result);
-                                                                                    if (data.stage) {
-                                                                                      setDevStage(data.stage);
-                                                                                    }
-                                                                                    if (data.physics) {
-                                                                                      setPhysicsConfig(data.physics);
-                                                                                    }
-                                                                                    alert('스테이지를 성공적으로 불러왔습니다!');
-                                                                                  } catch (error) {
-                                                                                    alert('JSON 파싱 오류: ' + error.message);
-                                                                                  }
-                                                                                };
-                                                                                reader.readAsText(file);
-                                                                              }
-                                                                              e.target.value = ''; // Reset input
-                                                                            }}
-                                                                            className="hidden"
-                                                                            id="json-upload"
-                                                                          />
-                                                                          <div className="w-full p-2 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm mb-2 cursor-pointer text-center">
-                                                                            📤 JSON 파일 불러오기
-                                                                          </div>
-                                                                        </label>
-
-                                                                        {/* JSON 클립보드에 복사 */}
-                                                                        <button
-                                                                          onClick={() => {
-                                                                            const stageData = {
-                                                                              version: "1.0",
-                                                                              stage: devStage,
-                                                                              physics: physicsConfig,
-                                                                              timestamp: new Date().toISOString()
-                                                                            };
-                                                                            const jsonStr = JSON.stringify(stageData, null, 2);
-                                                                            navigator.clipboard.writeText(jsonStr).then(() => {
-                                                                              alert('JSON이 클립보드에 복사되었습니다!');
-                                                                            }).catch(err => {
-                                                                              alert('복사 실패: ' + err);
-                                                                            });
-                                                                          }}
-                                                                          className="w-full p-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm mb-2"
-                                                                        >
-                                                                          📋 JSON 클립보드 복사
-                                                                        </button>
-
-                                                                        {/* JSON 텍스트에서 불러오기 */}
-                                                                        <button
-                                                                          onClick={() => {
-                                                                            const jsonText = prompt('JSON 데이터를 붙여넣으세요:');
-                                                                            if (jsonText) {
-                                                                              try {
-                                                                                const data = JSON.parse(jsonText);
-                                                                                if (data.stage) {
-                                                                                  setDevStage(data.stage);
-                                                                                }
-                                                                                if (data.physics) {
-                                                                                  setPhysicsConfig(data.physics);
-                                                                                }
-                                                                                alert('스테이지를 성공적으로 불러왔습니다!');
-                                                                              } catch (error) {
-                                                                                alert('JSON 파싱 오류: ' + error.message);
-                                                                              }
-                                                                            }
-                                                                          }}
-                                                                          className="w-full p-2 bg-cyan-600 hover:bg-cyan-700 rounded text-white text-sm mb-3"
-                                                                        >
-                                                                          📄 텍스트에서 불러오기
-                                                                        </button>
-
-                                                                        {/* 저장된 스테이지 목록 */}
-                                                                        {userStages.length > 0 && (
-                                                                          <div className="mt-3 pt-3 border-t border-stone-700">
-                                                                            <div className="text-cyan-300 text-sm font-bold mb-2">📁 저장된 스테이지 ({userStages.length}개)</div>
-                                                                            <div className="max-h-60 overflow-y-auto space-y-2">
-                                                                              {userStages.map((stage, index) => (
-                                                                                <div key={stage.id} className="p-2 bg-stone-900 rounded border border-stone-700 hover:border-cyan-600 transition-colors">
-                                                                                  <div className="flex justify-between items-start mb-1">
-                                                                                    <div className="flex-1">
-                                                                                      <div className="text-white text-xs font-bold">{stage.name}</div>
-                                                                                      <div className="text-slate-400 text-xs mt-1">
-                                                                                        🔴 {stage.stage.marbles.length}개 | 🟢 {(stage.stage.springs || []).length}개
-                                                                                      </div>
-                                                                                    </div>
-                                                                                    <div className="flex gap-1">
-                                                                                      <button
-                                                                                        onClick={() => {
-                                                                                          setDevStage(stage.stage);
-                                                                                          if (stage.physics) {
-                                                                                            setPhysicsConfig(stage.physics);
-                                                                                          }
-                                                                                          alert(`"${stage.name}" 스테이지를 불러왔습니다!`);
-                                                                                        }}
-                                                                                        className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-white text-xs"
-                                                                                        title="불러오기"
-                                                                                      >
-                                                                                        📂
-                                                                                      </button>
-                                                                                      <button
-                                                                                        onClick={() => {
-                                                                                          if (confirm(`"${stage.name}" 스테이지를 삭제하시겠습니까?`)) {
-                                                                                            const newUserStages = userStages.filter((_, i) => i !== index);
-                                                                                            setUserStages(newUserStages);
-                                                                                            localStorage.setItem('userCustomStages', JSON.stringify(newUserStages));
-                                                                                            alert('삭제되었습니다.');
-                                                                                          }
-                                                                                        }}
-                                                                                        className="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-white text-xs"
-                                                                                        title="삭제"
-                                                                                      >
-                                                                                        🗑️
-                                                                                      </button>
-                                                                                    </div>
-                                                                                  </div>
-                                                                                  <div className="text-slate-500 text-xs">
-                                                                                    {new Date(stage.timestamp).toLocaleDateString('ko-KR')}
-                                                                                  </div>
-                                                                                </div>
-                                                                              ))}
-                                                                            </div>
-                                                                          </div>
-                                                                        )}
-                                                                      </div>
-                                                                    )}
-                                                                  </div>
+                                                                      <div className="mt-2 text-slate-500 text-xs">선택 툴(⬆️)로 오브젝트를 클릭하면 속성을 편집할 수 있습니다.</div>
+                                                                    </div>
+                                                                  )}
 
                                                                   {/* 하단 버튼들 */}
                                                                   <div className="border-t border-stone-700 pt-4 mt-4 space-y-2">
                                                                     {/* 테스트 모드 토글 */}
                                                                     <button
-                                                                      onClick={() => setIsTestMode(!isTestMode)}
+                                                                      onClick={() => { setIsTestMode(!isTestMode); if (!isTestMode) initStage(currentStage); }}
                                                                       className={`w-full py-3 rounded-lg font-bold transition-all ${
                                                                         isTestMode
                                                                           ? 'bg-amber-600 hover:bg-amber-700 text-white'
